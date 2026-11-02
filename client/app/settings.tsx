@@ -1,65 +1,40 @@
-import * as ImagePicker from 'expo-image-picker';
+// 账号与安全:改名、改密码、注销。弹层式编辑,三端一致。
+
 import { router } from 'expo-router';
-import * as Updates from 'expo-updates';
 import { useState } from 'react';
-import {
-  Alert,
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { api, avatarUrl } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { ListGroup, ListRow } from '@/components/ui/list';
+import { Sheet } from '@/components/ui/sheet';
+import { TextField } from '@/components/ui/text-field';
+import { Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { api } from '@/lib/api';
+import { dialog } from '@/lib/dialog';
+import { haptic } from '@/lib/haptics';
 import { useAuthStore } from '@/stores/auth-store';
+import { useProfileStore } from '@/stores/profile-store';
 
-// 手动改:每次发 OTA 前 +1,真机在设置页看这个号确认更新到没到
-const APP_VERSION = 'v3.10';
+type Panel = 'name' | 'password' | 'delete' | null;
 
 export default function SettingsScreen() {
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
-  const onTint = scheme === 'dark' ? '#151718' : '#fff';
-  const { username, userId, avatarTs, logout, setUsername, setAvatarTs } = useAuthStore();
-  const [checking, setChecking] = useState(false);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  // 展开的编辑面板:一次只开一个
-  const [editing, setEditing] = useState<'name' | 'password' | 'delete' | null>(null);
+  const { colors } = useTheme();
+  const { username, logout, setUsername } = useAuthStore();
+  const resetProfile = useProfileStore((s) => s.reset);
+  const [panel, setPanel] = useState<Panel>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
   const [delPwd, setDelPwd] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // 更换头像:选图(方形裁剪)→ base64 上传;服务端时间戳兼作缓存指纹
-  const pickAvatar = async () => {
-    if (avatarBusy) return;
-    setAvatarBusy(true);
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.7,
-        base64: true,
-      });
-      const b64 = result.assets?.[0]?.base64;
-      if (result.canceled || !b64) return;
-      const r = await api.uploadAvatar(b64);
-      await setAvatarTs(r.avatar_updated_at);
-    } catch (e) {
-      Alert.alert('头像更新失败', e instanceof Error ? e.message : String(e));
-    } finally {
-      setAvatarBusy(false);
-    }
+  const open = (p: Panel) => {
+    setNameDraft(username ?? '');
+    setOldPwd('');
+    setNewPwd('');
+    setDelPwd('');
+    setPanel(p);
   };
 
   const saveName = async () => {
@@ -69,10 +44,10 @@ export default function SettingsScreen() {
     try {
       const r = await api.changeUsername(name);
       await setUsername(r.username);
-      setEditing(null);
-      Alert.alert('账号名已修改', `现在叫「${r.username}」。`);
+      setPanel(null);
+      haptic.success();
     } catch (e) {
-      Alert.alert('修改失败', e instanceof Error ? e.message : String(e));
+      dialog.alert('修改失败', e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -83,335 +58,96 @@ export default function SettingsScreen() {
     setSaving(true);
     try {
       await api.changePassword(oldPwd, newPwd);
-      setOldPwd('');
-      setNewPwd('');
-      setEditing(null);
-      Alert.alert('密码已修改', '其他设备上的登录已全部退出。');
+      setPanel(null);
+      haptic.success();
+      dialog.alert('密码已修改', '其他设备上的登录已全部退出。');
     } catch (e) {
-      Alert.alert('修改失败', e instanceof Error ? e.message : String(e));
+      dialog.alert('修改失败', e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
   };
 
-  const checkUpdate = async () => {
-    if (checking) return;
-    // 开发模式(expo start)没有 updates 运行时,直接跳过
-    if (!Updates.isEnabled) {
-      Alert.alert('开发模式', '当前不是发布版,无法检查 OTA 更新。');
-      return;
-    }
-    setChecking(true);
-    try {
-      const result = await Updates.checkForUpdateAsync();
-      if (result.isAvailable) {
-        await Updates.fetchUpdateAsync();
-        Alert.alert('新版本已下载', '重启应用即可生效。', [
-          { text: '稍后' },
-          { text: '立即重启', onPress: () => Updates.reloadAsync() },
-        ]);
-      } else {
-        Alert.alert('已是最新版本', `当前 ${APP_VERSION}`);
-      }
-    } catch (e) {
-      Alert.alert('检查更新失败', e instanceof Error ? e.message : String(e));
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  // 注销走两道关:面板里输密码,再弹一次不可恢复的确认。
-  // 不用 Alert.prompt——那个只在 iOS 有效,Android 上静默什么都不做。
-  const confirmDeleteAccount = () => {
+  // 注销走两道关:弹层里输密码,再弹一次不可恢复的确认(自绘弹窗,三端可用)
+  const confirmDeleteAccount = async () => {
     if (!delPwd || saving) return;
-    Alert.alert(
-      '永久删除账号?',
-      '日记、人格卡片、化身对话记录和头像会全部删除,无法恢复。',
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '永久删除',
-          style: 'destructive',
-          onPress: async () => {
-            setSaving(true);
-            try {
-              await api.deleteAccount(delPwd);
-              setDelPwd('');
-              await logout();
-              router.replace('/login');
-            } catch (e) {
-              Alert.alert('注销失败', e instanceof Error ? e.message : String(e));
-            } finally {
-              setSaving(false);
-            }
-          },
-        },
-      ],
-    );
-  };
-
-  const confirmLogout = () => {
-    Alert.alert('退出登录?', '本机的离线日记队列会保留,下次登录后继续同步。', [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '退出',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          // 关掉设置弹层并直接回登录页(tabs 的 Redirect 只在其获得焦点时生效)
-          router.replace('/login');
-        },
-      },
-    ]);
+    setPanel(null);
+    const ok = await dialog.confirm({
+      title: '永久删除账号?',
+      message: '日记、人格卡片、对外形象、化身对话记录和头像会全部删除,无法恢复。',
+      confirmText: '永久删除',
+      destructive: true,
+    });
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await api.deleteAccount(delPwd);
+      setDelPwd('');
+      await logout();
+      resetProfile();
+      router.replace('/login');
+    } catch (e) {
+      dialog.alert('注销失败', e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <ThemedView style={styles.flex}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {/* 账号卡片:点头像即可更换 */}
-        <View style={styles.accountCard}>
-          <Pressable onPress={pickAvatar} hitSlop={6}>
-            {userId && avatarTs ? (
-              <Image source={{ uri: avatarUrl(userId, avatarTs) }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, { backgroundColor: tint }]}>
-                <Text style={styles.avatarInitial}>
-                  {(username ?? '?').slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
-            )}
-            <View style={styles.avatarBadge}>
-              <Text style={styles.avatarBadgeText}>{avatarBusy ? '…' : '✎'}</Text>
-            </View>
-          </Pressable>
-          <View>
-            <ThemedText style={styles.accountName}>{username}</ThemedText>
-            <ThemedText style={styles.accountHint}>当前登录的账号 · 点头像更换</ThemedText>
-          </View>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ListGroup title="账号">
+        <ListRow icon="person.fill" iconColor={colors.tint} title="账号名" value={username ?? ''} onPress={() => open('name')} />
+        <ListRow icon="key.fill" iconColor="#5856D6" title="修改密码" onPress={() => open('password')} />
+      </ListGroup>
+
+      <ListGroup
+        title="数据"
+        footer="注销会删除账号连同全部日记、人格卡片、对话记录和头像,不可恢复。你也可以只删除单篇日记,它的衍生数据会一并删除。">
+        <ListRow icon="trash.fill" iconColor="#FF3B30" title="注销账号" destructive onPress={() => open('delete')} />
+      </ListGroup>
+
+      {/* 改名 */}
+      <Sheet visible={panel === 'name'} onClose={() => setPanel(null)} title="修改账号名">
+        <View style={styles.form}>
+          <TextField
+            tone="fill"
+            value={nameDraft}
+            onChangeText={setNameDraft}
+            placeholder="新账号名(2~20 字)"
+            maxLength={20}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={saveName}
+          />
+          <Button title="保存" fullWidth loading={saving} disabled={!nameDraft.trim() || nameDraft.trim() === username} onPress={saveName} />
         </View>
+      </Sheet>
 
-        {/* 修改账号名 */}
-        <Pressable
-          style={styles.rowItem}
-          onPress={() => {
-            setNameDraft(username ?? '');
-            setEditing(editing === 'name' ? null : 'name');
-          }}>
-          <IconSymbol size={20} name="person.2.fill" color={Colors[scheme].icon} />
-          <ThemedText style={styles.rowText}>修改账号名</ThemedText>
-        </Pressable>
-        {editing === 'name' && (
-          <View style={styles.editPanel}>
-            <TextInput
-              style={[styles.input, { color: Colors[scheme].text }]}
-              value={nameDraft}
-              onChangeText={setNameDraft}
-              placeholder="新账号名(2~20 字)"
-              placeholderTextColor="rgba(127,127,127,0.6)"
-              maxLength={20}
-              autoFocus
-            />
-            <Pressable
-              style={[
-                styles.saveBtn,
-                { backgroundColor: tint, opacity: nameDraft.trim() && !saving ? 1 : 0.4 },
-              ]}
-              disabled={!nameDraft.trim() || saving}
-              onPress={saveName}>
-              <Text style={[styles.saveBtnText, { color: onTint }]}>
-                {saving ? '保存中...' : '保存'}
-              </Text>
-            </Pressable>
-          </View>
-        )}
+      {/* 改密 */}
+      <Sheet visible={panel === 'password'} onClose={() => setPanel(null)} title="修改密码">
+        <View style={styles.form}>
+          <TextField tone="fill" value={oldPwd} onChangeText={setOldPwd} placeholder="当前密码" secureTextEntry autoFocus />
+          <TextField tone="fill" value={newPwd} onChangeText={setNewPwd} placeholder="新密码(至少 6 位)" secureTextEntry onSubmitEditing={savePassword} />
+          <Text style={[Type.footnote, { color: colors.textSecondary }]}>修改后,其他设备的登录会全部退出。</Text>
+          <Button title="保存" fullWidth loading={saving} disabled={!oldPwd || newPwd.length < 6} onPress={savePassword} />
+        </View>
+      </Sheet>
 
-        {/* 修改密码 */}
-        <Pressable
-          style={styles.rowItem}
-          onPress={() => {
-            setOldPwd('');
-            setNewPwd('');
-            setEditing(editing === 'password' ? null : 'password');
-          }}>
-          <IconSymbol size={20} name="lock.fill" color={Colors[scheme].icon} />
-          <ThemedText style={styles.rowText}>修改密码</ThemedText>
-        </Pressable>
-        {editing === 'password' && (
-          <View style={styles.editPanel}>
-            <TextInput
-              style={[styles.input, { color: Colors[scheme].text }]}
-              value={oldPwd}
-              onChangeText={setOldPwd}
-              placeholder="当前密码"
-              placeholderTextColor="rgba(127,127,127,0.6)"
-              secureTextEntry
-              autoFocus
-            />
-            <TextInput
-              style={[styles.input, { color: Colors[scheme].text }]}
-              value={newPwd}
-              onChangeText={setNewPwd}
-              placeholder="新密码(至少 6 位)"
-              placeholderTextColor="rgba(127,127,127,0.6)"
-              secureTextEntry
-            />
-            <ThemedText style={styles.editHint}>修改后,其他设备的登录会全部退出。</ThemedText>
-            <Pressable
-              style={[
-                styles.saveBtn,
-                {
-                  backgroundColor: tint,
-                  opacity: oldPwd && newPwd.length >= 6 && !saving ? 1 : 0.4,
-                },
-              ]}
-              disabled={!oldPwd || newPwd.length < 6 || saving}
-              onPress={savePassword}>
-              <Text style={[styles.saveBtnText, { color: onTint }]}>
-                {saving ? '保存中...' : '保存'}
-              </Text>
-            </Pressable>
-          </View>
-        )}
-
-        <Pressable style={styles.rowItem} onPress={() => router.push('/appearance')}>
-          <IconSymbol size={20} name="paintbrush.fill" color={Colors[scheme].icon} />
-          <ThemedText style={styles.rowText}>外观</ThemedText>
-        </Pressable>
-
-        <Pressable
-          style={styles.rowItem}
-          onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'set' } })}>
-          <IconSymbol size={20} name="lock.fill" color={Colors[scheme].icon} />
-          <ThemedText style={styles.rowText}>手势锁图案</ThemedText>
-        </Pressable>
-
-        <Pressable style={styles.rowItem} onPress={checkUpdate}>
-          <IconSymbol size={20} name="arrow.clockwise" color={Colors[scheme].icon} />
-          <ThemedText style={styles.rowText}>
-            {checking ? '正在检查更新...' : '检查更新'}
-          </ThemedText>
-          <ThemedText style={styles.versionText}>{APP_VERSION}</ThemedText>
-        </Pressable>
-
-        <Pressable style={[styles.rowItem, styles.logoutItem]} onPress={confirmLogout}>
-          <IconSymbol size={20} name="rectangle.portrait.and.arrow.right" color="#ca4543" />
-          <Text style={[styles.rowText, styles.logoutText]}>退出登录</Text>
-        </Pressable>
-
-        {/* 注销账号。Apple 审核指南 5.1.1(v):允许注册的 App 必须能在 App 内
-            自助注销,不能只留客服邮箱。同时对应 CLAUDE.md §5 的删除权。 */}
-        <Pressable
-          style={styles.rowItem}
-          onPress={() => {
-            setDelPwd('');
-            setEditing(editing === 'delete' ? null : 'delete');
-          }}>
-          <IconSymbol size={20} name="trash.fill" color="#ca4543" />
-          <Text style={[styles.rowText, styles.logoutText]}>注销账号</Text>
-        </Pressable>
-        {editing === 'delete' && (
-          <View style={styles.editPanel}>
-            <ThemedText style={styles.editHint}>
-              账号连同全部日记、人格卡片、化身对话记录将被永久删除,无法恢复。
-            </ThemedText>
-            <TextInput
-              style={[styles.input, { color: Colors[scheme].text }]}
-              value={delPwd}
-              onChangeText={setDelPwd}
-              placeholder="输入当前密码确认"
-              placeholderTextColor="rgba(127,127,127,0.6)"
-              secureTextEntry
-              autoFocus
-            />
-            <Pressable
-              style={[
-                styles.saveBtn,
-                { backgroundColor: '#ca4543', opacity: delPwd && !saving ? 1 : 0.4 },
-              ]}
-              disabled={!delPwd || saving}
-              onPress={confirmDeleteAccount}>
-              <Text style={[styles.saveBtnText, { color: '#fff' }]}>
-                {saving ? '删除中...' : '永久删除账号'}
-              </Text>
-            </Pressable>
-          </View>
-        )}
-      </ScrollView>
-    </ThemedView>
+      {/* 注销 */}
+      <Sheet visible={panel === 'delete'} onClose={() => setPanel(null)} title="注销账号">
+        <View style={styles.form}>
+          <Text style={[Type.footnote, { color: colors.textSecondary }]}>
+            账号连同全部日记、人格卡片、对外形象、化身对话记录将被永久删除,无法恢复。输入当前密码确认。
+          </Text>
+          <TextField tone="fill" value={delPwd} onChangeText={setDelPwd} placeholder="当前密码" secureTextEntry autoFocus />
+          <Button title="永久删除账号" variant="danger" fullWidth loading={saving} disabled={!delPwd} onPress={confirmDeleteAccount} />
+        </View>
+      </Sheet>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  container: { padding: 20, gap: 10 },
-  accountCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    padding: 18,
-    borderRadius: 18,
-    backgroundColor: 'rgba(127,127,127,0.10)',
-    marginBottom: 8,
-  },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarBadge: {
-    position: 'absolute',
-    right: -3,
-    bottom: -3,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(127,127,127,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarBadgeText: { color: '#fff', fontSize: 11, lineHeight: 13 },
-  avatarInitial: { color: '#fff', fontSize: 21, fontWeight: '700' },
-  accountName: { fontSize: 19, fontWeight: '700' },
-  accountHint: { fontSize: 12, opacity: 0.5, marginTop: 3 },
-  rowItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    minHeight: 52,
-    paddingHorizontal: 16,
-    borderRadius: 14,
-    backgroundColor: 'rgba(127,127,127,0.08)',
-  },
-  rowText: { fontSize: 15, fontWeight: '600' },
-  versionText: { fontSize: 12, opacity: 0.45, marginLeft: 'auto' },
-  editPanel: {
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-    backgroundColor: 'rgba(127,127,127,0.05)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(127,127,127,0.25)',
-  },
-  input: {
-    minHeight: 42,
-    borderWidth: 1,
-    borderColor: 'rgba(127,127,127,0.3)',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    fontSize: 15,
-    backgroundColor: 'rgba(127,127,127,0.08)',
-  },
-  editHint: { fontSize: 12, opacity: 0.5 },
-  saveBtn: {
-    minHeight: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  saveBtnText: { fontSize: 14, fontWeight: '700' },
-  logoutItem: { marginTop: 14, backgroundColor: 'rgba(202,69,67,0.10)' },
-  logoutText: { color: '#ca4543' },
+  content: { padding: 20, paddingBottom: 40 },
+  form: { gap: 12, paddingTop: 4 },
 });

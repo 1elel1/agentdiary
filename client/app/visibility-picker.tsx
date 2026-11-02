@@ -1,31 +1,26 @@
-// 「指定的人」白名单选择:从日记卡片右滑面板的「指定」进入。
+// 「指定的人」白名单选择:从日记卡片长按菜单的「指定的人」进入。
 // 保存后该日记的衍生卡片只对勾选的用户开放。
 
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Avatar } from '@/components/ui/avatar';
+import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
+import { HeaderButton } from '@/components/ui/header-button';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
+import { dialog } from '@/lib/dialog';
+import { haptic } from '@/lib/haptics';
 import type { UserSummary } from '@/lib/types';
 import { useDiaryStore } from '@/stores/diary-store';
 
 export default function VisibilityPickerScreen() {
   const { diaryId } = useLocalSearchParams<{ diaryId: string }>();
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
-  const onTint = scheme === 'dark' ? '#151718' : '#fff';
+  const { colors } = useTheme();
   const setVisibility = useDiaryStore((s) => s.setVisibility);
 
   const [users, setUsers] = useState<UserSummary[]>([]);
@@ -35,16 +30,20 @@ export default function VisibilityPickerScreen() {
 
   useEffect(() => {
     if (!diaryId) return;
-    Promise.all([api.listUsers(), api.getDiaryAllowed(diaryId).catch(() => ({ allowed_user_ids: [] }))])
+    Promise.all([
+      api.listUsers(),
+      api.getDiaryAllowed(diaryId).catch(() => ({ allowed_user_ids: [] as string[] })),
+    ])
       .then(([list, allowed]) => {
         setUsers(list.filter((u) => !u.is_builtin));
         setSelected(new Set(allowed.allowed_user_ids));
       })
-      .catch((e) => Alert.alert('加载失败', String(e)))
+      .catch((e) => dialog.alert('加载失败', e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [diaryId]);
 
   const toggle = (id: string) => {
+    haptic.selection();
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -58,88 +57,66 @@ export default function VisibilityPickerScreen() {
     setSaving(true);
     try {
       await setVisibility(diaryId, 'restricted', [...selected]);
+      haptic.success();
       router.back();
     } catch (e) {
-      Alert.alert('保存失败', String(e));
+      dialog.alert('保存失败', e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText style={styles.hint}>
-        这篇日记的内容,你的化身只会对勾选的人透露。
-      </ThemedText>
-
+    <View style={styles.container}>
+      <Stack.Screen
+        options={{
+          headerLeft: () => <HeaderButton title="取消" onPress={() => router.back()} />,
+          headerRight: () => (
+            <HeaderButton title={`保存(${selected.size})`} bold loading={saving} disabled={loading} onPress={save} />
+          ),
+        }}
+      />
+      <Text style={[Type.footnote, styles.hint, { color: colors.textSecondary }]}>
+        这篇日记学到的东西,你的化身只会对勾选的人用到。
+      </Text>
       {loading ? (
         <ActivityIndicator style={styles.loading} />
       ) : (
         <FlatList
           data={users}
           keyExtractor={(u) => u.id}
-          ListEmptyComponent={
-            <ThemedText style={styles.hint}>还没有其他用户可选。</ThemedText>
-          }
-          renderItem={({ item }) => {
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={<EmptyState icon="person.2.fill" title="还没有其他用户可选" />}
+          renderItem={({ item, index }) => {
             const checked = selected.has(item.id);
             return (
-              <Pressable style={styles.row} onPress={() => toggle(item.id)}>
-                <View
-                  style={[styles.checkbox, checked && { backgroundColor: tint, borderColor: tint }]}>
-                  {checked && <Text style={[styles.checkmark, { color: onTint }]}>✓</Text>}
+              <Card padded={false} style={[styles.rowCard, index > 0 && styles.rowGap]} onPress={() => toggle(item.id)}>
+                <View style={styles.row}>
+                  <Avatar username={item.username} userId={item.id} avatarTs={item.avatar_updated_at} size={40} />
+                  <Text style={[Type.body, styles.name, { color: colors.text }]} numberOfLines={1}>
+                    {item.username}
+                  </Text>
+                  <IconSymbol
+                    name={checked ? 'checkmark.circle.fill' : 'circle'}
+                    size={24}
+                    color={checked ? colors.tint : colors.textTertiary}
+                  />
                 </View>
-                <ThemedText style={styles.name}>{item.username}</ThemedText>
-              </Pressable>
+              </Card>
             );
           }}
         />
       )}
-
-      <Pressable
-        style={[styles.saveButton, { backgroundColor: tint, opacity: saving ? 0.6 : 1 }]}
-        disabled={saving || loading}
-        onPress={save}>
-        {saving ? (
-          <ActivityIndicator color={onTint} />
-        ) : (
-          <Text style={[styles.saveText, { color: onTint }]}>
-            保存({selected.size} 人可见)
-          </Text>
-        )}
-      </Pressable>
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
-  hint: { fontSize: 13, opacity: 0.55, lineHeight: 20, marginBottom: 14 },
+  container: { flex: 1 },
+  hint: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 6, lineHeight: 18 },
   loading: { marginTop: 40 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(127,127,127,0.2)',
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: 'rgba(127,127,127,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkmark: { fontSize: 14, fontWeight: '700' },
-  name: { fontSize: 17 },
-  saveButton: {
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  saveText: { fontSize: 15, fontWeight: '600' },
+  list: { paddingHorizontal: 20, paddingVertical: 10 },
+  rowCard: {},
+  rowGap: { marginTop: 8 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
+  name: { flex: 1 },
 });

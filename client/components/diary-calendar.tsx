@@ -3,17 +3,15 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { IconButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { dateKey } from '@/lib/format';
+
+export { dateKey };
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
-
-export function dateKey(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
-}
 
 function monthMatrix(year: number, month: number): (number | null)[][] {
   // month: 0-11;周一为一周之首
@@ -39,10 +37,7 @@ export function DiaryCalendar({
   selected: string | null;
   onSelect: (date: string | null) => void;
 }) {
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
-  const onTint = scheme === 'dark' ? '#151718' : '#fff';
-
+  const { colors } = useTheme();
   const initial = selected ? new Date(selected) : new Date();
   const [year, setYear] = useState(initial.getFullYear());
   const [month, setMonth] = useState(initial.getMonth());
@@ -56,33 +51,27 @@ export function DiaryCalendar({
   const todayKey = dateKey(new Date());
 
   return (
-    <View style={styles.container}>
+    <Card style={styles.card} padded={false}>
       <View style={styles.header}>
-        <Pressable onPress={() => shift(-1)} hitSlop={10} style={styles.navBtn}>
-          <ThemedText style={styles.navText}>‹</ThemedText>
-        </Pressable>
-        <ThemedText style={styles.monthTitle}>
+        <IconButton name="chevron.left" size={16} onPress={() => shift(-1)} accessibilityLabel="上个月" />
+        <Text style={[Type.headline, { color: colors.text }]}>
           {year} 年 {month + 1} 月
-        </ThemedText>
-        <Pressable onPress={() => shift(1)} hitSlop={10} style={styles.navBtn}>
-          <ThemedText style={styles.navText}>›</ThemedText>
-        </Pressable>
+        </Text>
+        <IconButton name="chevron.right" size={16} onPress={() => shift(1)} accessibilityLabel="下个月" />
       </View>
 
       <View style={styles.weekRow}>
         {WEEKDAYS.map((w) => (
-          <ThemedText key={w} style={styles.weekday}>
+          <Text key={w} style={[Type.caption2, styles.weekday, { color: colors.textTertiary }]}>
             {w}
-          </ThemedText>
+          </Text>
         ))}
       </View>
 
       {monthMatrix(year, month).map((week, wi) => (
         <View key={wi} style={styles.weekRow}>
           {week.map((day, di) => {
-            if (day === null) {
-              return <View key={di} style={styles.cell} />;
-            }
+            if (day === null) return <View key={di} style={styles.cell} />;
             const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             const isSelected = selected === key;
             const hasEntry = marked.has(key);
@@ -90,60 +79,57 @@ export function DiaryCalendar({
             return (
               <Pressable
                 key={di}
-                style={[styles.cell, isSelected && { backgroundColor: tint, borderRadius: 17 }]}
+                accessibilityRole="button"
+                accessibilityLabel={`${month + 1}月${day}日${hasEntry ? ',有日记' : ''}`}
+                style={styles.cell}
                 onPress={() => onSelect(isSelected ? null : key)}>
-                <Text
+                <View
                   style={[
-                    styles.dayText,
-                    { color: isSelected ? onTint : Colors[scheme].text },
-                    isToday && !isSelected && { color: tint, fontWeight: '700' },
-                    !hasEntry && !isSelected && styles.dayMuted,
+                    styles.dayDisc,
+                    isSelected && { backgroundColor: colors.tint },
+                    isToday && !isSelected && { backgroundColor: colors.tintSoft },
                   ]}>
-                  {day}
-                </Text>
+                  <Text
+                    style={[
+                      Type.subhead,
+                      {
+                        color: isSelected
+                          ? colors.onTint
+                          : isToday
+                            ? colors.tint
+                            : hasEntry
+                              ? colors.text
+                              : colors.textTertiary,
+                        fontWeight: isToday || hasEntry ? '600' : '400',
+                      },
+                    ]}>
+                    {day}
+                  </Text>
+                </View>
                 {hasEntry && (
-                  <View
-                    style={[styles.dot, { backgroundColor: isSelected ? onTint : tint }]}
-                  />
+                  <View style={[styles.dot, { backgroundColor: isSelected ? colors.tint : colors.tint }]} />
                 )}
               </Pressable>
             );
           })}
         </View>
       ))}
-    </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    marginHorizontal: 20,
-    marginBottom: 10,
-    padding: 12,
-    borderRadius: 18,
-    backgroundColor: 'rgba(127,127,127,0.10)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(127,127,127,0.2)',
-  },
+  card: { marginHorizontal: 20, marginBottom: 12, paddingHorizontal: 10, paddingVertical: 10 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
-    paddingHorizontal: 6,
+    paddingHorizontal: 4,
   },
-  navBtn: { width: 36, alignItems: 'center' },
-  navText: { fontSize: 22, opacity: 0.7 },
-  monthTitle: { fontSize: 15, fontWeight: '600' },
   weekRow: { flexDirection: 'row' },
-  weekday: { flex: 1, textAlign: 'center', fontSize: 11, opacity: 0.45, marginBottom: 4 },
-  cell: {
-    flex: 1,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayText: { fontSize: 14 },
-  dayMuted: { opacity: 0.45 },
-  dot: { position: 'absolute', bottom: 3, width: 4, height: 4, borderRadius: 2 },
+  weekday: { flex: 1, textAlign: 'center', marginBottom: 6 },
+  cell: { flex: 1, height: 42, alignItems: 'center', justifyContent: 'center' },
+  dayDisc: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  dot: { position: 'absolute', bottom: 2, width: 5, height: 5, borderRadius: 2.5 },
 });

@@ -1,60 +1,28 @@
-import { Redirect, router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Image,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  interpolate,
-  runOnJS,
-  type SharedValue,
-  useAnimatedReaction,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import { Redirect, router, useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { Avatar } from '@/components/ui/avatar';
+import { Banner } from '@/components/ui/banner';
+import { Button, IconButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { api, avatarUrl } from '@/lib/api';
-import { avatarColor, CELEBRITY_PORTRAITS } from '@/lib/celebrity-portraits';
+import { LargeHeader, SectionLabel } from '@/components/ui/large-header';
+import { Pill } from '@/components/ui/pill';
+import { ActionSheet } from '@/components/ui/sheet';
+import { Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { api } from '@/lib/api';
+import { haptic } from '@/lib/haptics';
 import { kvGet, kvSet } from '@/lib/kv';
 import type { UserSummary } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
+import { useProfileStore } from '@/stores/profile-store';
 
-// 用户自定义的会话列表排序(仅本机显示顺序,长按拖动调整)
-const ORDER_KEY = 'agentdiary_discover_order';
-// 置顶的用户 id 列表(仅本机;长按头像切换)
+// 置顶的用户 id 列表(仅本机;长按行切换)
 const PIN_KEY = 'agentdiary_chat_pins';
-
-// 固定行高:自绘排序依赖等高行(卡片 84 + 间距 14)
-const CARD_HEIGHT = 84;
-const ROW_GAP = 14;
-const ITEM_HEIGHT = CARD_HEIGHT + ROW_GAP;
-// 左右小幅拖动的最大位移与阻尼(与日记卡片同样的玩法,纯手感、无功能)
-const DRIFT_MAX = 36;
-
-const SPRING = { damping: 22, stiffness: 220 };
-
-async function loadOrder(): Promise<string[]> {
-  try {
-    const raw = await kvGet(ORDER_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  } catch {
-    return [];
-  }
-}
 
 async function loadPins(): Promise<string[]> {
   try {
@@ -63,41 +31,6 @@ async function loadPins(): Promise<string[]> {
   } catch {
     return [];
   }
-}
-
-function applyOrder(users: UserSummary[], order: string[]): UserSummary[] {
-  if (order.length === 0) return users;
-  const rank = new Map(order.map((id, i) => [id, i]));
-  // 有既存排序的按排序走,新面孔排在最后(保持服务器给的相对顺序)
-  return [...users].sort(
-    (a, b) => (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length),
-  );
-}
-
-function UserAvatar({
-  username,
-  userId,
-  avatarTs,
-}: {
-  username: string;
-  userId?: string;
-  avatarTs?: string | null;
-}) {
-  // 优先级:自定义头像 > 名人内置画像 > 首字母色块
-  if (userId && avatarTs) {
-    return (
-      <Image source={{ uri: avatarUrl(userId, avatarTs) }} style={styles.avatar} fadeDuration={0} />
-    );
-  }
-  const portrait = CELEBRITY_PORTRAITS[username];
-  if (portrait) {
-    return <Image source={portrait} style={styles.avatar} fadeDuration={0} />;
-  }
-  return (
-    <View style={[styles.avatar, { backgroundColor: avatarColor(username) }]}>
-      <Text style={styles.avatarInitial}>{username.slice(0, 1).toUpperCase()}</Text>
-    </View>
-  );
 }
 
 function openChat(user: UserSummary) {
@@ -112,229 +45,114 @@ function openChat(user: UserSummary) {
   });
 }
 
-function DraggableRow({
-  user,
-  count,
-  positions,
-  onReorder,
-  onPinToggle,
-}: {
-  user: UserSummary;
-  count: number;
-  // id → 槽位序号,全程在 UI 线程读写,排序过程不触发 React 重渲染(防闪烁的关键)
-  positions: SharedValue<Record<string, number>>;
-  onReorder: (positions: Record<string, number>) => void;
-  onPinToggle: () => void;
-}) {
-  const active = useSharedValue(false);
-  const x = useSharedValue(0);
-  const top = useSharedValue((positions.value[user.id] ?? 0) * ITEM_HEIGHT);
-  const dragStartTop = useSharedValue(0);
-
-  // 别的行把自己的槽位挤走时,弹到新位置
-  useAnimatedReaction(
-    () => positions.value[user.id],
-    (slot, prev) => {
-      if (slot === undefined || slot === prev) return;
-      if (!active.value) {
-        top.value = withSpring(slot * ITEM_HEIGHT, SPRING);
-      }
-    },
-  );
-
-  // 长按后上下拖动排序(比头像长按置顶的 260ms 晚,避免抢手势)
-  const reorderGesture = Gesture.Pan()
-    .activateAfterLongPress(420)
-    .onStart(() => {
-      active.value = true;
-      dragStartTop.value = top.value;
-    })
-    .onUpdate((e) => {
-      top.value = dragStartTop.value + e.translationY;
-      const mySlot = positions.value[user.id];
-      const targetSlot = Math.min(
-        count - 1,
-        Math.max(0, Math.round(top.value / ITEM_HEIGHT)),
-      );
-      if (targetSlot !== mySlot) {
-        // 和目标槽位的行互换
-        const next = { ...positions.value };
-        for (const id in next) {
-          if (next[id] === targetSlot) {
-            next[id] = mySlot;
-            break;
-          }
-        }
-        next[user.id] = targetSlot;
-        positions.value = next;
-      }
-    })
-    .onEnd(() => {
-      active.value = false;
-      top.value = withSpring(positions.value[user.id] * ITEM_HEIGHT, SPRING);
-      runOnJS(onReorder)(positions.value);
-    })
-    .onFinalize(() => {
-      if (active.value) {
-        active.value = false;
-        top.value = withSpring(positions.value[user.id] * ITEM_HEIGHT, SPRING);
-      }
-    });
-
-  // 左右小幅拖动(带阻尼回弹,同日记卡片的手感;纵向让位给列表滚动)
-  const driftGesture = Gesture.Pan()
-    .activeOffsetX([-14, 14])
-    .failOffsetY([-12, 12])
-    .onUpdate((e) => {
-      const damped = e.translationX / 3;
-      x.value = Math.max(-DRIFT_MAX, Math.min(DRIFT_MAX, damped));
-    })
-    .onEnd(() => {
-      x.value = withSpring(0, SPRING);
-    })
-    .onFinalize(() => {
-      x.value = withSpring(0, SPRING);
-    });
-
-  const gesture = Gesture.Race(reorderGesture, driftGesture);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    top: top.value,
-    zIndex: active.value ? 10 : 0,
-    transform: [
-      { translateX: x.value },
-      { scale: withTiming(active.value ? 1.03 : 1, { duration: 140 }) },
-      // 轻微倾斜呼应横向拖动,与日记卡片一致的俏皮感
-      { rotateZ: `${interpolate(x.value, [-DRIFT_MAX, DRIFT_MAX], [-1.2, 1.2])}deg` },
-    ],
-  }));
-
-  return (
-    <GestureDetector gesture={gesture}>
-      <Animated.View style={[styles.rowWrap, animatedStyle]}>
-        <Pressable style={styles.card} onPress={() => openChat(user)}>
-          {/* 长按头像置顶:用原生 LongPress 手势,260ms 先于外层拖动的 420ms
-              激活,子手势激活会按 RNGH 标准仲裁取消外层 Pan(GH Pressable 做不到) */}
-          <GestureDetector
-            gesture={Gesture.LongPress()
-              .minDuration(260)
-              .maxDistance(18)
-              .onStart(() => {
-                'worklet';
-                runOnJS(onPinToggle)();
-              })}>
-            <View collapsable={false}>
-              <UserAvatar
-                username={user.username}
-                userId={user.id}
-                avatarTs={user.avatar_updated_at}
-              />
-            </View>
-          </GestureDetector>
-          <View style={styles.cardBody}>
-            <View style={styles.cardRow}>
-              <ThemedText style={styles.cardName} numberOfLines={1}>
-                {user.username}
-              </ThemedText>
-              <ThemedText style={styles.cardMeta} numberOfLines={1}>
-                {user.is_builtin
-                  ? '名人化身'
-                  : user.card_count > 0
-                    ? `人格卡片 ${user.card_count} 张`
-                    : '化身尚未喂养'}
-              </ThemedText>
-            </View>
-            <ThemedText style={styles.cardHint} numberOfLines={1}>
-              {user.status ? `今日:${user.status}` : '去和 TA 的化身聊聊 →'}
-            </ThemedText>
-          </View>
-        </Pressable>
-      </Animated.View>
-    </GestureDetector>
-  );
+function metaLine(user: UserSummary): string {
+  if (user.is_builtin) return '名人化身 · 由人物设定驱动';
+  if (user.card_count > 0) return `${user.card_count} 张人格卡片`;
+  return '化身尚未喂养';
 }
 
-// 置顶卡片:样式对齐「我的化身」(描边突出),长按头像取消置顶
-function PinnedCard({ user, onUnpin }: { user: UserSummary; onUnpin: () => void }) {
-  const scheme = useColorScheme() ?? 'light';
+function hintLine(user: UserSummary): string {
+  if (user.status) return `今日:${user.status}`;
+  if (user.persona_excerpt) return user.persona_excerpt;
+  return '去和 TA 的化身聊聊';
+}
+
+function UserRow({
+  user,
+  pinned,
+  onLongPress,
+}: {
+  user: UserSummary;
+  pinned: boolean;
+  onLongPress: () => void;
+}) {
+  const { colors } = useTheme();
   return (
     <Pressable
-      style={[styles.card, styles.pinnedCard, { borderColor: Colors[scheme].tint }]}
-      onPress={() => openChat(user)}>
-      {/* 与置顶同一套手势:长按头像取消置顶 */}
-      <GestureDetector
-        gesture={Gesture.LongPress()
-          .minDuration(260)
-          .maxDistance(18)
-          .onStart(() => {
-            'worklet';
-            runOnJS(onUnpin)();
-          })}>
-        <View collapsable={false}>
-          <UserAvatar
-            username={user.username}
-            userId={user.id}
-            avatarTs={user.avatar_updated_at}
-          />
-        </View>
-      </GestureDetector>
-      <View style={styles.cardBody}>
-        <View style={styles.cardRow}>
-          <ThemedText style={styles.cardName} numberOfLines={1}>
+      onPress={() => openChat(user)}
+      onLongPress={() => {
+        haptic.medium();
+        onLongPress();
+      }}
+      delayLongPress={320}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.fill }]}>
+      <Avatar username={user.username} userId={user.id} avatarTs={user.avatar_updated_at} size={50} />
+      <View style={styles.rowBody}>
+        <View style={styles.rowTop}>
+          <Text style={[Type.headline, styles.rowName, { color: colors.text }]} numberOfLines={1}>
             {user.username}
-          </ThemedText>
-          <ThemedText style={styles.cardMeta}>已置顶</ThemedText>
+          </Text>
+          {pinned && <IconSymbol name="pin.fill" size={12} color={colors.textTertiary} />}
+          <Text style={[Type.caption1, { color: colors.textTertiary }]} numberOfLines={1}>
+            {metaLine(user)}
+          </Text>
         </View>
-        <ThemedText style={styles.cardHint} numberOfLines={1}>
-          {user.status ? `今日:${user.status}` : '去和 TA 的化身聊聊 →'}
-        </ThemedText>
+        <Text
+          style={[Type.subhead, { color: user.status ? colors.tint : colors.textSecondary }]}
+          numberOfLines={1}>
+          {hintLine(user)}
+        </Text>
       </View>
+      <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
     </Pressable>
   );
 }
 
+function RowGroup({ users, pins, onLongPress }: { users: UserSummary[]; pins: string[]; onLongPress: (u: UserSummary) => void }) {
+  const { colors } = useTheme();
+  return (
+    <Card padded={false} style={styles.group}>
+      {users.map((u, i) => (
+        <View key={u.id}>
+          {i > 0 && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
+          <UserRow user={u} pinned={pins.includes(u.id)} onLongPress={() => onLongPress(u)} />
+        </View>
+      ))}
+    </Card>
+  );
+}
+
 export default function ChatsScreen() {
+  const token = useAuthStore((s) => s.token);
+  if (!token) {
+    return <Redirect href="/login" />;
+  }
+  return <Chats />;
+}
+
+function Chats() {
   const insets = useSafeAreaInsets();
-  const scheme = useColorScheme() ?? 'light';
-  const { token, username, userId, avatarTs } = useAuthStore();
+  const { colors } = useTheme();
+  const { username, userId, avatarTs } = useAuthStore();
+  const { persona, cardCount, refresh: refreshProfile } = useProfileStore();
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [pins, setPins] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const positions = useSharedValue<Record<string, number>>({});
+  const [actionUser, setActionUser] = useState<UserSummary | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [list, order, savedPins] = await Promise.all([
-        api.listUsers(),
-        loadOrder(),
-        loadPins(),
-      ]);
-      const sorted = applyOrder(list, order);
-      setUsers(sorted);
+      const [list, savedPins] = await Promise.all([api.listUsers(), loadPins()]);
+      setUsers(list);
       setPins(savedPins.filter((id) => list.some((u) => u.id === id)));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (token) refresh();
-  }, [token, refresh]);
-
-  const onReorder = useCallback(async (pos: Record<string, number>) => {
-    const ids = Object.entries(pos)
-      .sort((a, b) => a[1] - b[1])
-      .map(([id]) => id);
-    await kvSet(ORDER_KEY, JSON.stringify(ids)).catch(() => {});
-    // 不 setState:布局完全由共享值驱动,避免松手后的重渲染闪烁
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+      refreshProfile(userId).catch(() => {});
+    }, [refresh, refreshProfile, userId]),
+  );
 
   const togglePin = useCallback((id: string) => {
     setPins((prev) => {
@@ -344,163 +162,139 @@ export default function ChatsScreen() {
     });
   }, []);
 
-  // 置顶的固定在上方(按置顶先后),其余进可拖动排序的列表
   const pinnedUsers = useMemo(
-    () =>
-      pins
-        .map((id) => users.find((u) => u.id === id))
-        .filter((u): u is UserSummary => u !== undefined),
+    () => pins.map((id) => users.find((u) => u.id === id)).filter((u): u is UserSummary => !!u),
     [pins, users],
   );
-  const others = useMemo(() => users.filter((u) => !pins.includes(u.id)), [pins, users]);
-
-  // 置顶集合变化后重建槽位表(共享值,不触发行组件重挂载)
-  useEffect(() => {
-    positions.value = Object.fromEntries(others.map((u, i) => [u.id, i]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [others]);
-
-  // users 的 id 集合稳定时,行组件不因排序重挂载
-  const rows = useMemo(
-    () =>
-      others.map((u) => (
-        <DraggableRow
-          key={u.id}
-          user={u}
-          count={others.length}
-          positions={positions}
-          onReorder={onReorder}
-          onPinToggle={() => togglePin(u.id)}
-        />
-      )),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [others, onReorder, togglePin],
+  const people = useMemo(
+    () => users.filter((u) => !u.is_builtin && !pins.includes(u.id)),
+    [users, pins],
+  );
+  const celebrities = useMemo(
+    () => users.filter((u) => u.is_builtin && !pins.includes(u.id)),
+    [users, pins],
   );
 
-  if (!token) {
-    return <Redirect href="/login" />;
-  }
+  const openSelf = () =>
+    router.push({
+      pathname: '/visit/[userId]',
+      params: { userId: userId ?? '', username: username ?? '', builtin: '', avatarTs: avatarTs ?? '' },
+    });
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <ThemedText type="title">对话</ThemedText>
-        {/* 真人聊天:只列 AI 裁判评估通过(已解锁)的人 */}
-        <Pressable
-          style={styles.realChatsBtn}
-          hitSlop={10}
-          onPress={() => router.push('/real-chats')}>
-          <IconSymbol size={30} name="person.2.fill" color={Colors[scheme].icon} />
-        </Pressable>
-      </View>
-
-      {/* 我的化身:固定置顶,不参与拖动排序 */}
-      <Pressable
-        style={[styles.card, styles.selfCard, { borderColor: Colors[scheme].tint }]}
-        onPress={() =>
-          router.push({
-            pathname: '/visit/[userId]',
-            params: {
-              userId: userId ?? '',
-              username: username ?? '',
-              builtin: '',
-              avatarTs: avatarTs ?? '',
-            },
-          })
-        }>
-        <UserAvatar username={username ?? '我'} userId={userId ?? undefined} avatarTs={avatarTs} />
-        <View style={styles.cardBody}>
-          <View style={styles.cardRow}>
-            <ThemedText style={styles.cardName} numberOfLines={1}>
-              我的化身
-            </ThemedText>
-            <ThemedText style={styles.cardMeta}>自聊</ThemedText>
-          </View>
-          <ThemedText style={styles.cardHint} numberOfLines={1}>
-            和自己的化身聊聊,检验它像不像你 →
-          </ThemedText>
-        </View>
-      </Pressable>
-
-      {pinnedUsers.map((u) => (
-        <PinnedCard key={u.id} user={u} onUnpin={() => togglePin(u.id)} />
-      ))}
-
-      {error && <Text style={styles.error}>{error}</Text>}
-
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
-        contentContainerStyle={
-          others.length === 0
-            ? styles.emptyContainer
-            : { height: others.length * ITEM_HEIGHT + ROW_GAP + insets.bottom + 20 }
-        }>
-        {others.length === 0 && !loading ? (
-          <ThemedText style={styles.emptyText}>
-            {users.length === 0 ? '还没有其他用户。' : '都被你置顶了。'}
-          </ThemedText>
-        ) : (
-          rows
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.textSecondary} />}>
+        <LargeHeader
+          title="对话"
+          subtitle="和化身聊,聊得来再见真人"
+          right={
+            <IconButton
+              name="person.2.fill"
+              onPress={() => router.push('/real-chats')}
+              accessibilityLabel="真人聊天"
+            />
+          }
+        />
+
+        {/* 我的化身:固定在最上面 */}
+        <Card onPress={openSelf} style={styles.selfCard}>
+          <View style={styles.selfTop}>
+            <Avatar username={username ?? '我'} userId={userId} avatarTs={avatarTs} size={54} />
+            <View style={styles.rowBody}>
+              <Text style={[Type.headline, { color: colors.text }]}>我的化身</Text>
+              <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
+                由你的日记喂养{cardCount ? ` · ${cardCount} 张人格卡片` : ' · 还没有人格卡片'}
+              </Text>
+            </View>
+            <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
+          </View>
+          <View style={[styles.selfFooter, { borderTopColor: colors.separator }]}>
+            <Pill
+              label={persona ? '对外形象已设置' : '还没写对外形象'}
+              tone={persona ? 'tint' : 'warning'}
+              icon="person.text.rectangle.fill"
+            />
+            <Button
+              title={persona ? '编辑' : '去写一段'}
+              variant="ghost"
+              size="sm"
+              onPress={() => router.push('/persona-editor')}
+              style={styles.selfAction}
+            />
+          </View>
+        </Card>
+
+        {error && <Banner tone="danger" message={error} actionLabel="重试" onAction={refresh} style={styles.banner} />}
+
+        {pinnedUsers.length > 0 && (
+          <>
+            <SectionLabel>置顶</SectionLabel>
+            <RowGroup users={pinnedUsers} pins={pins} onLongPress={setActionUser} />
+          </>
+        )}
+
+        {people.length > 0 && (
+          <>
+            <SectionLabel>化身</SectionLabel>
+            <RowGroup users={people} pins={pins} onLongPress={setActionUser} />
+          </>
+        )}
+
+        {celebrities.length > 0 && (
+          <>
+            <SectionLabel>名人化身</SectionLabel>
+            <RowGroup users={celebrities} pins={pins} onLongPress={setActionUser} />
+          </>
+        )}
+
+        {loaded && users.length === 0 && !error && (
+          <EmptyState icon="person.2.fill" title="还没有其他用户" message="等朋友也来写日记,这里就会出现 TA 的化身。" />
         )}
       </ScrollView>
-    </ThemedView>
+
+      <ActionSheet
+        visible={actionUser !== null}
+        onClose={() => setActionUser(null)}
+        title={actionUser?.username}
+        actions={
+          actionUser
+            ? [
+                {
+                  label: pins.includes(actionUser.id) ? '取消置顶' : '置顶',
+                  icon: pins.includes(actionUser.id) ? 'pin.slash.fill' : 'pin.fill',
+                  onPress: () => togglePin(actionUser.id),
+                },
+                { label: '打开对话', icon: 'bubble.left.fill', onPress: () => openChat(actionUser) },
+              ]
+            : []
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
+  content: { paddingBottom: 32 },
+  selfCard: { marginHorizontal: 20, marginTop: 6, marginBottom: 20, padding: 0 },
+  selfTop: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
+  selfFooter: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 12,
-  },
-  realChatsBtn: { alignItems: 'center', justifyContent: 'center' },
-  error: { color: '#c44', paddingHorizontal: 24, paddingBottom: 8 },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { opacity: 0.5 },
-  rowWrap: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    height: CARD_HEIGHT,
-  },
-  card: {
-    height: CARD_HEIGHT,
     paddingHorizontal: 16,
-    borderRadius: 18,
-    backgroundColor: 'rgba(127,127,127,0.10)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  selfCard: {
-    marginHorizontal: 20,
-    marginTop: 10,
-    marginBottom: ROW_GAP,
-    borderWidth: 1,
-  },
-  pinnedCard: {
-    marginHorizontal: 20,
-    marginBottom: ROW_GAP,
-    borderWidth: 1,
-    opacity: 0.98,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarInitial: { color: '#fff', fontSize: 19, fontWeight: '600' },
-  cardBody: { flex: 1 },
-  cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardName: { fontSize: 19, fontWeight: '600', flexShrink: 1 },
-  cardMeta: { fontSize: 12, opacity: 0.5, marginLeft: 8 },
-  cardHint: { fontSize: 14, opacity: 0.6, marginTop: 6 },
+  selfAction: { paddingHorizontal: 8 },
+  banner: { marginHorizontal: 20, marginBottom: 14 },
+  group: { marginHorizontal: 20, marginBottom: 20 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12 },
+  rowBody: { flex: 1, gap: 3 },
+  rowTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowName: { flexShrink: 1 },
+  separator: { height: StyleSheet.hairlineWidth, marginLeft: 80 },
 });

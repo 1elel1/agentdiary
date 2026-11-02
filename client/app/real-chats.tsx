@@ -1,38 +1,24 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import {
-  FlatList,
-  Image,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { api, avatarUrl } from '@/lib/api';
-import { avatarColor } from '@/lib/celebrity-portraits';
+import { Avatar } from '@/components/ui/avatar';
+import { Banner } from '@/components/ui/banner';
+import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { api } from '@/lib/api';
+import { formatRecent } from '@/lib/format';
 import type { ConversationItem } from '@/lib/types';
-
-function formatLastAt(iso: string): string {
-  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  }
-  return `${d.getMonth() + 1}-${d.getDate()}`;
-}
 
 // 真人聊天列表:只有 AI 裁判评估通过(解锁)的用户才会出现在这里
 export default function RealChatsScreen() {
+  const { colors } = useTheme();
   const [items, setItems] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -44,6 +30,7 @@ export default function RealChatsScreen() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
   }, []);
 
@@ -55,24 +42,26 @@ export default function RealChatsScreen() {
   );
 
   return (
-    <ThemedView style={styles.container}>
-      {error && <Text style={styles.error}>{error}</Text>}
+    <View style={styles.container}>
       <FlatList
         data={items}
         keyExtractor={(i) => i.user_id}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
-        contentContainerStyle={[styles.list, items.length === 0 && styles.emptyContainer]}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.textSecondary} />}
+        contentContainerStyle={[styles.list, items.length === 0 && styles.listGrow]}
+        ListHeaderComponent={error ? <Banner tone="danger" message={error} style={styles.banner} /> : null}
         ListEmptyComponent={
-          !loading ? (
-            <ThemedText style={styles.emptyText}>
-              还没有解锁的真人对话。{'\n\n'}
-              先去和 TA 的化身聊上几句,再让 AI 裁判评估契合度——通过后,真人就会出现在这里。
-            </ThemedText>
+          loaded && !loading ? (
+            <EmptyState
+              icon="person.2.fill"
+              title="还没有解锁的真人对话"
+              message="先去和 TA 的化身聊上几句,再请 AI 裁判评估契合度。通过后,真人就会出现在这里。"
+            />
           ) : null
         }
         renderItem={({ item }) => (
-          <Pressable
-            style={styles.row}
+          <Card
+            padded={false}
+            style={styles.card}
             onPress={() =>
               router.push({
                 pathname: '/visit/[userId]',
@@ -85,74 +74,38 @@ export default function RealChatsScreen() {
                 },
               })
             }>
-            {item.avatar_updated_at ? (
-              <Image
-                source={{ uri: avatarUrl(item.user_id, item.avatar_updated_at) }}
-                style={styles.avatar}
-                fadeDuration={0}
-              />
-            ) : (
-              <View style={[styles.avatar, { backgroundColor: avatarColor(item.username) }]}>
-                <Text style={styles.avatarInitial}>
-                  {item.username.slice(0, 1).toUpperCase()}
+            <View style={styles.row}>
+              <Avatar username={item.username} userId={item.user_id} avatarTs={item.avatar_updated_at} size={50} />
+              <View style={styles.rowBody}>
+                <View style={styles.rowTop}>
+                  <Text style={[Type.headline, styles.name, { color: colors.text }]} numberOfLines={1}>
+                    {item.username}
+                  </Text>
+                  {item.last_at && (
+                    <Text style={[Type.caption1, { color: colors.textTertiary }]}>{formatRecent(item.last_at)}</Text>
+                  )}
+                </View>
+                <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {item.last_message ?? '已解锁,打个招呼吧'}
                 </Text>
               </View>
-            )}
-            <View style={styles.rowBody}>
-              <View style={styles.rowTop}>
-                <ThemedText style={styles.name} numberOfLines={1}>
-                  {item.username}
-                </ThemedText>
-                {item.last_at && (
-                  <ThemedText style={styles.time}>{formatLastAt(item.last_at)}</ThemedText>
-                )}
-              </View>
-              <ThemedText style={styles.preview} numberOfLines={1}>
-                {item.last_message ?? '已解锁,打个招呼吧 →'}
-              </ThemedText>
+              <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
             </View>
-          </Pressable>
+          </Card>
         )}
       />
-    </ThemedView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  error: { color: '#c44', paddingHorizontal: 20, paddingTop: 10 },
-  list: { padding: 16, gap: 10 },
-  emptyContainer: { flex: 1, justifyContent: 'center' },
-  emptyText: {
-    opacity: 0.5,
-    textAlign: 'center',
-    paddingHorizontal: 40,
-    fontSize: 15,
-    lineHeight: 24,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 13,
-    minHeight: 76,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    borderRadius: 18,
-    backgroundColor: 'rgba(127,127,127,0.10)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarInitial: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  rowBody: { flex: 1 },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: 17, fontWeight: '600', flexShrink: 1 },
-  time: { fontSize: 12, opacity: 0.45, marginLeft: 8 },
-  preview: { fontSize: 13, opacity: 0.55, marginTop: 5 },
+  list: { padding: 20, gap: 10 },
+  listGrow: { flexGrow: 1, justifyContent: 'center' },
+  banner: { marginBottom: 6 },
+  card: {},
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 13 },
+  rowBody: { flex: 1, gap: 3 },
+  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  name: { flexShrink: 1 },
 });

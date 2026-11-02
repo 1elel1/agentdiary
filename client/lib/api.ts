@@ -10,6 +10,9 @@ import type {
   DiaryVisibility,
   DirectMessageItem,
   JudgeStatus,
+  PersonaCard,
+  PersonaOut,
+  UserProfile,
   UserSummary,
 } from './types';
 
@@ -141,6 +144,25 @@ export const api = {
     }),
 
   getMyStatus: () => request<{ status: string | null }>('/users/me/status'),
+
+  // 对外形象:写给来访者看、也注入化身 prompt 的自我介绍。null/空串 = 清除
+  getMyPersona: () => request<PersonaOut>('/users/me/persona'),
+
+  setPersona: (persona: string | null) =>
+    request<PersonaOut>('/users/me/persona', {
+      method: 'PUT',
+      body: JSON.stringify({ persona }),
+    }),
+
+  // 某个化身的资料(含对外形象全文);自己看自己也走这里
+  getProfile: (userId: string) => request<UserProfile>(`/users/${userId}/profile`),
+
+  // 自己的人格卡片(带出处日记 id,可追溯)
+  listPersonaCards: () => request<PersonaCard[]>('/persona-cards'),
+
+  // 手动重跑一篇日记的蒸馏(先清旧产物)
+  redistillDiary: (id: string) =>
+    request<{ status: string; diary_id: string }>(`/diaries/${id}/distill`, { method: 'POST' }),
 
   setDiaryVisibility: (id: string, visibility: DiaryVisibility, allowedUserIds?: string[]) =>
     request<DiaryEntry>(`/diaries/${id}`, {

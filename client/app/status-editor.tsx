@@ -1,130 +1,121 @@
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { api } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { HeaderButton } from '@/components/ui/header-button';
+import { TextField } from '@/components/ui/text-field';
+import { Radius, Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { dialog } from '@/lib/dialog';
+import { haptic } from '@/lib/haptics';
+import { useAuthStore } from '@/stores/auth-store';
+import { useProfileStore } from '@/stores/profile-store';
 
 // 预设状态(微信状态式):点选即填,也可自由输入
-const PRESETS = [
-  '😊 开心',
-  '😪 有点累',
-  '💻 搬砖中',
-  '📚 学习中',
-  '🏃 运动中',
-  '🌙 想静静',
-  '🍜 干饭中',
-  '✈️ 在路上',
-];
+const PRESETS = ['😊 开心', '😪 有点累', '💻 搬砖中', '📚 学习中', '🏃 运动中', '🌙 想静静', '🍜 干饭中', '✈️ 在路上'];
+const MAX = 50;
 
 export default function StatusEditorScreen() {
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
-  const onTint = scheme === 'dark' ? '#151718' : '#fff';
-  const [text, setText] = useState('');
+  const { colors } = useTheme();
+  const userId = useAuthStore((s) => s.userId);
+  const { loaded, status, refresh, saveStatus } = useProfileStore();
+  const [text, setText] = useState(status ?? '');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api
-      .getMyStatus()
-      .then((r) => setText(r.status ?? ''))
-      .catch(() => {});
-  }, []);
+    if (!loaded) refresh(userId).catch(() => {});
+  }, [loaded, refresh, userId]);
+
+  useEffect(() => {
+    setText((t) => (t.length === 0 && status ? status : t));
+  }, [status]);
 
   const save = async (value: string | null) => {
     if (busy) return;
     setBusy(true);
     try {
-      await api.setStatus(value);
+      await saveStatus(value);
+      haptic.success();
       router.back();
     } catch (e) {
-      Alert.alert('保存失败', String(e));
+      dialog.alert('保存失败', e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   };
 
+  const trimmed = text.trim();
+
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText style={styles.hint}>
-        状态会展示给来找你化身聊天的人,并影响化身的当天语气;24 小时后自动消失。
-      </ThemedText>
-
-      <View style={styles.presets}>
-        {PRESETS.map((p) => (
-          <Pressable
-            key={p}
-            style={[styles.preset, text === p && { backgroundColor: tint }]}
-            onPress={() => setText(p)}>
-            <Text style={[styles.presetText, text === p && { color: onTint }]}>{p}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      <TextInput
-        style={[styles.input, { color: Colors[scheme].text }]}
-        placeholder="或者自己写一个(50 字内)…"
-        placeholderTextColor="rgba(127,127,127,0.6)"
-        value={text}
-        onChangeText={setText}
-        maxLength={50}
+    <>
+      <Stack.Screen
+        options={{
+          title: '今日状态',
+          headerLeft: () => <HeaderButton title="取消" onPress={() => router.back()} />,
+          headerRight: () => (
+            <HeaderButton title="设为状态" bold loading={busy} disabled={!trimmed} onPress={() => save(trimmed)} />
+          ),
+        }}
       />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={[Type.footnote, styles.hint, { color: colors.textSecondary }]}>
+          状态会展示给来找你化身聊天的人,也会影响化身今天的语气。24 小时后自动消失。
+        </Text>
 
-      <Pressable
-        style={[styles.saveButton, { backgroundColor: tint, opacity: text.trim() ? 1 : 0.4 }]}
-        disabled={!text.trim() || busy}
-        onPress={() => save(text.trim())}>
-        {busy ? (
-          <ActivityIndicator color={onTint} />
-        ) : (
-          <Text style={[styles.saveText, { color: onTint }]}>设为今日状态</Text>
+        <View style={styles.presets}>
+          {PRESETS.map((p) => {
+            const active = text === p;
+            return (
+              <Pressable
+                key={p}
+                onPress={() => {
+                  haptic.selection();
+                  setText(p);
+                }}
+                style={({ pressed }) => [
+                  styles.preset,
+                  {
+                    backgroundColor: active ? colors.tint : colors.surface,
+                    borderColor: active ? colors.tint : colors.separator,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}>
+                <Text style={[Type.subhead, { color: active ? colors.onTint : colors.text, fontWeight: '500' }]}>{p}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <TextField
+          placeholder="或者自己写一个…"
+          value={text}
+          onChangeText={setText}
+          maxLength={MAX}
+          returnKeyType="done"
+          onSubmitEditing={() => trimmed && save(trimmed)}
+        />
+        <Text style={[Type.caption1, styles.counter, { color: colors.textTertiary }]}>
+          {trimmed.length} / {MAX}
+        </Text>
+
+        {status && (
+          <Button title="清除状态" variant="dangerSoft" fullWidth onPress={() => save(null)} disabled={busy} style={styles.clear} />
         )}
-      </Pressable>
-
-      <Pressable style={styles.clear} onPress={() => save(null)} disabled={busy}>
-        <ThemedText style={styles.clearText}>清除状态</ThemedText>
-      </Pressable>
-    </ThemedView>
+      </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
-  hint: { fontSize: 12, opacity: 0.5, lineHeight: 18, marginBottom: 16 },
-  presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  content: { padding: 20, gap: 14 },
+  hint: { lineHeight: 18 },
+  presets: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   preset: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: 'rgba(127,127,127,0.12)',
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  presetText: { fontSize: 14 },
-  input: {
-    borderWidth: 1,
-    borderColor: 'rgba(127,127,127,0.3)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    marginBottom: 16,
-  },
-  saveButton: {
-    height: 46,
-    borderRadius: 23,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  saveText: { fontSize: 15, fontWeight: '600' },
-  clear: { alignItems: 'center', marginTop: 14 },
-  clearText: { fontSize: 13, opacity: 0.5 },
+  counter: { textAlign: 'right', marginTop: -8, marginRight: 4 },
+  clear: { marginTop: 8 },
 });

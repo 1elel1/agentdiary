@@ -4,12 +4,11 @@
 import { useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View } from 'react-native';
 
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useTheme } from '@/hooks/use-theme';
 
-const GRID = 264;
+const GRID = 240;
 const CELL = GRID / 3;
-const HIT_RADIUS = 34;
+const HIT_RADIUS = 32;
 export const MIN_DOTS = 4;
 
 function dotCenter(index: number) {
@@ -26,8 +25,7 @@ export function PatternLock({
   onComplete: (pattern: string) => void;
   disabled?: boolean;
 }) {
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
+  const { colors } = useTheme();
   const [selected, setSelected] = useState<number[]>([]);
   const selRef = useRef<number[]>([]);
   // PanResponder 只创建一次,会永久捕获首次渲染的闭包;
@@ -77,16 +75,15 @@ export function PatternLock({
       {Array.from({ length: 9 }, (_, i) => {
         const c = dotCenter(i);
         const active = selected.includes(i);
-        const order = selected.indexOf(i);
         return (
-          <View
-            key={i}
-            style={[
-              styles.dot,
-              { left: c.x - 14, top: c.y - 14, borderColor: active ? tint : 'rgba(127,127,127,0.45)' },
-              active && { backgroundColor: tint },
-            ]}>
-            {active && order >= 0 && <View style={styles.dotInner} />}
+          <View key={i} style={[styles.halo, { left: c.x - 24, top: c.y - 24 }, active && { backgroundColor: colors.tintSoft }]}>
+            <View
+              style={[
+                styles.dot,
+                { borderColor: active ? colors.tint : colors.fillStrong, backgroundColor: active ? colors.tint : colors.surface },
+              ]}>
+              {active && <View style={styles.dotInner} />}
+            </View>
           </View>
         );
       })}
@@ -96,11 +93,18 @@ export function PatternLock({
 
 const styles = StyleSheet.create({
   grid: { width: GRID, height: GRID, alignSelf: 'center' },
-  dot: {
+  halo: {
     position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     borderWidth: 2,
     justifyContent: 'center',
     alignItems: 'center',

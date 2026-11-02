@@ -1,15 +1,19 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { SectionLabel } from '@/components/ui/large-header';
+import { ListGroup, ListRow } from '@/components/ui/list';
+import { Radius, Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { BACKGROUND_PRESETS, type BackgroundSetting } from '@/lib/backgrounds';
+import { dialog } from '@/lib/dialog';
+import { haptic } from '@/lib/haptics';
 import { useSettingsStore } from '@/stores/settings-store';
 
 function sameSetting(a: BackgroundSetting, b: BackgroundSetting): boolean {
@@ -34,6 +38,38 @@ async function pickAndStoreImage(slot: 'diary' | 'chat'): Promise<string | null>
   return `${dest}?t=${Date.now()}`;
 }
 
+function Swatch({
+  selected,
+  onPress,
+  label,
+  children,
+}: {
+  selected: boolean;
+  onPress: () => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      onPress={() => {
+        haptic.selection();
+        onPress();
+      }}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.swatchWrap, { opacity: pressed ? 0.8 : 1 }]}>
+      <View style={[styles.swatchRing, { borderColor: selected ? colors.tint : 'transparent' }]}>
+        <View style={[styles.swatch, { borderColor: colors.separator }]}>{children}</View>
+      </View>
+      <Text style={[Type.caption1, { color: selected ? colors.tint : colors.textSecondary, fontWeight: selected ? '600' : '400' }]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 function BackgroundPicker({
   title,
   value,
@@ -45,8 +81,7 @@ function BackgroundPicker({
   onChange: (bg: BackgroundSetting) => void;
   slot: 'diary' | 'chat';
 }) {
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
+  const { colors, scheme } = useTheme();
   const [busy, setBusy] = useState(false);
 
   const upload = async () => {
@@ -56,49 +91,37 @@ function BackgroundPicker({
       const uri = await pickAndStoreImage(slot);
       if (uri) onChange({ kind: 'custom', uri });
     } catch (e) {
-      Alert.alert('选图失败', String(e));
+      dialog.alert('选图失败', e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const ring = (selected: boolean) => [
-    styles.swatchRing,
-    selected && { borderColor: tint },
-  ];
-
   return (
     <View style={styles.section}>
-      <ThemedText style={styles.sectionTitle}>{title}</ThemedText>
+      <SectionLabel>{title}</SectionLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        {/* 默认 */}
-        <Pressable style={ring(value.kind === 'default')} onPress={() => onChange({ kind: 'default' })}>
-          <View style={[styles.swatch, { backgroundColor: Colors[scheme].background }]}>
-            <ThemedText style={styles.swatchLabel}>默认</ThemedText>
-          </View>
-        </Pressable>
-        {/* 预设渐变 */}
+        <Swatch selected={value.kind === 'default'} onPress={() => onChange({ kind: 'default' })} label="默认">
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]} />
+        </Swatch>
         {BACKGROUND_PRESETS.map((p) => (
-          <Pressable
+          <Swatch
             key={p.id}
-            style={ring(sameSetting(value, { kind: 'preset', id: p.id }))}
-            onPress={() => onChange({ kind: 'preset', id: p.id })}>
-            <LinearGradient colors={p[scheme]} style={styles.swatch}>
-              <ThemedText style={styles.swatchLabel}>{p.name}</ThemedText>
-            </LinearGradient>
-          </Pressable>
+            selected={sameSetting(value, { kind: 'preset', id: p.id })}
+            onPress={() => onChange({ kind: 'preset', id: p.id })}
+            label={p.name}>
+            <LinearGradient colors={p[scheme]} style={StyleSheet.absoluteFill} />
+          </Swatch>
         ))}
-        {/* 自定义上传 */}
-        <Pressable style={ring(value.kind === 'custom')} onPress={upload}>
+        <Swatch selected={value.kind === 'custom'} onPress={upload} label={value.kind === 'custom' ? '相册(换一张)' : '相册'}>
           {value.kind === 'custom' ? (
-            <Image source={{ uri: value.uri }} style={styles.swatch} />
+            <Image source={{ uri: value.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
           ) : (
-            <View style={[styles.swatch, styles.uploadSwatch]}>
-              <ThemedText style={styles.uploadPlus}>＋</ThemedText>
-              <ThemedText style={styles.swatchLabel}>相册</ThemedText>
+            <View style={[StyleSheet.absoluteFill, styles.uploadSwatch, { backgroundColor: colors.fill }]}>
+              <IconSymbol name="photo.fill" size={22} color={colors.textTertiary} />
             </View>
           )}
-        </Pressable>
+        </Swatch>
       </ScrollView>
     </View>
   );
@@ -106,86 +129,53 @@ function BackgroundPicker({
 
 export default function AppearanceScreen() {
   const { diaryBg, chatBg, setDiaryBg, setChatBg, lockPattern } = useSettingsStore();
-  const scheme = useColorScheme() ?? 'light';
-  const tint = Colors[scheme].tint;
+  const { colors } = useTheme();
 
   return (
-    <ThemedView style={styles.container}>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <BackgroundPicker title="日记背景" value={diaryBg} onChange={setDiaryBg} slot="diary" />
       <BackgroundPicker title="聊天背景" value={chatBg} onChange={setChatBg} slot="chat" />
-
-      <View style={styles.section}>
-        <ThemedText style={styles.sectionTitle}>私密日记手势锁</ThemedText>
-        <View style={styles.lockRow}>
-          <ThemedText style={styles.lockStatus}>
-            {lockPattern ? '已开启:打开「仅自己」日记需绘制图案' : '未开启'}
-          </ThemedText>
-          <View style={styles.lockButtons}>
-            <Pressable
-              style={[styles.lockBtn, { backgroundColor: tint }]}
-              onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'set' } })}>
-              <ThemedText
-                style={[styles.lockBtnText, { color: scheme === 'dark' ? '#151718' : '#fff' }]}>
-                {lockPattern ? '修改图案' : '设置图案'}
-              </ThemedText>
-            </Pressable>
-            {lockPattern && (
-              <Pressable
-                style={styles.lockBtnGhost}
-                onPress={() =>
-                  router.push({ pathname: '/pattern-setup', params: { mode: 'disable' } })
-                }>
-                <ThemedText style={styles.lockBtnGhostText}>关闭</ThemedText>
-              </Pressable>
-            )}
-          </View>
-        </View>
-      </View>
-
-      <ThemedText style={styles.hint}>
+      <Text style={[Type.caption1, styles.hint, { color: colors.textTertiary }]}>
         自定义图片会加一层淡淡的遮罩来保证文字可读;更换后立即生效。
-      </ThemedText>
-    </ThemedView>
+      </Text>
+
+      <View style={styles.lockGroup}>
+        <ListGroup title="私密日记手势锁" footer="手势锁只存在这台设备上,用于打开加了锁的日记。忘记图案时,重新登录即可重置。">
+          <ListRow
+            icon="lock.fill"
+            iconColor="#8E8E93"
+            title={lockPattern ? '修改图案' : '设置图案'}
+            value={lockPattern ? '已开启' : '未开启'}
+            onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'set' } })}
+          />
+          {lockPattern ? (
+            <ListRow
+              icon="lock.open.fill"
+              iconColor="#FF9F0A"
+              title="关闭手势锁"
+              onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'disable' } })}
+            />
+          ) : null}
+        </ListGroup>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: 8 },
-  section: { marginTop: 16 },
-  sectionTitle: { fontSize: 15, fontWeight: '600', paddingHorizontal: 20, marginBottom: 10 },
-  row: { paddingHorizontal: 16, gap: 10 },
-  swatchRing: {
-    borderWidth: 2,
-    borderColor: 'transparent',
-    borderRadius: 16,
-    padding: 2,
-  },
+  content: { paddingTop: 12, paddingBottom: 40 },
+  section: { marginBottom: 10 },
+  row: { paddingHorizontal: 20, gap: 12 },
+  swatchWrap: { alignItems: 'center', gap: 6 },
+  swatchRing: { borderWidth: 2, borderRadius: Radius.lg, padding: 3 },
   swatch: {
-    width: 72,
-    height: 96,
-    borderRadius: 12,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-    paddingBottom: 8,
+    width: 74,
+    height: 104,
+    borderRadius: Radius.md,
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(127,127,127,0.25)',
   },
-  swatchLabel: { fontSize: 11, opacity: 0.7 },
-  uploadSwatch: { justifyContent: 'center', gap: 2 },
-  uploadPlus: { fontSize: 24, opacity: 0.5, lineHeight: 28 },
-  hint: { fontSize: 12, opacity: 0.45, paddingHorizontal: 20, marginTop: 24, lineHeight: 18 },
-  lockRow: { paddingHorizontal: 20, gap: 10 },
-  lockStatus: { fontSize: 13, opacity: 0.6 },
-  lockButtons: { flexDirection: 'row', gap: 10 },
-  lockBtn: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16 },
-  lockBtnText: { fontSize: 13, fontWeight: '600' },
-  lockBtnGhost: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(127,127,127,0.4)',
-  },
-  lockBtnGhostText: { fontSize: 13, opacity: 0.7 },
+  uploadSwatch: { alignItems: 'center', justifyContent: 'center' },
+  hint: { paddingHorizontal: 20, marginTop: 8, marginBottom: 20, lineHeight: 16 },
+  lockGroup: { paddingHorizontal: 20 },
 });

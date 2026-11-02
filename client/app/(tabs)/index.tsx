@@ -1,102 +1,58 @@
 import { Redirect, router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import {
-  Alert,
-  FlatList,
-  Modal,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { DiaryCalendar, dateKey } from '@/components/diary-calendar';
+import { DiaryCalendar } from '@/components/diary-calendar';
 import { PatternLock } from '@/components/pattern-lock';
 import { ScreenBackground } from '@/components/screen-background';
-import { ThemedText } from '@/components/themed-text';
+import { Banner } from '@/components/ui/banner';
+import { Button, IconButton } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { LargeHeader } from '@/components/ui/large-header';
+import { Pill } from '@/components/ui/pill';
+import { SegmentedControl } from '@/components/ui/segmented';
+import { ActionSheet, Sheet } from '@/components/ui/sheet';
+import { Radius, Type, floatingShadow } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
+import { dialog } from '@/lib/dialog';
+import { dateKey, dayLabel, formatRemaining, formatTime, parseUtc } from '@/lib/format';
+import { haptic } from '@/lib/haptics';
 import type { PendingDiary } from '@/lib/offline-queue';
 import type { DiaryEntry, DiaryVisibility } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
 import { useDiaryStore } from '@/stores/diary-store';
+import { useProfileStore } from '@/stores/profile-store';
 import { useSettingsStore } from '@/stores/settings-store';
-
-function parseUtc(iso: string) {
-  return new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`);
-}
-
-function formatDate(iso: string) {
-  const d = parseUtc(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 // 日记落笔 24 小时内可修改,之后定格(保证日记的真实性)
 const EDIT_WINDOW_MS = 24 * 3600 * 1000;
 
 function editRemainingMs(createdAtIso: string): number {
-  const created = new Date(
-    createdAtIso.endsWith('Z') || createdAtIso.includes('+')
-      ? createdAtIso
-      : `${createdAtIso}Z`,
-  ).getTime();
-  return created + EDIT_WINDOW_MS - Date.now();
-}
-
-function formatRemaining(ms: number): string {
-  const hours = ms / 3600000;
-  if (hours >= 1) return `${Math.floor(hours)}h`;
-  return `${Math.max(1, Math.floor(ms / 60000))}m`;
+  return parseUtc(createdAtIso).getTime() + EDIT_WINDOW_MS - Date.now();
 }
 
 type Row =
+  | { kind: 'header'; id: string; label: string }
   | { kind: 'pending'; id: string; item: PendingDiary }
   | { kind: 'entry'; id: string; item: DiaryEntry };
 
-const VISIBILITY_LABEL: Record<DiaryVisibility, string> = {
-  public: '公开',
-  restricted: '指定用户',
-  private: '仅自己',
-};
+type ItemRow = Exclude<Row, { kind: 'header' }>;
 
 const VISIBILITY_OPTIONS: { key: DiaryVisibility; label: string }[] = [
   { key: 'public', label: '公开' },
-  { key: 'restricted', label: '指定' },
-  { key: 'private', label: '自己' },
+  { key: 'restricted', label: '指定的人' },
+  { key: 'private', label: '仅自己' },
 ];
 
-// 便签底色:按 id 哈希取色,低透明度,不压过自定义背景与暗色主题
-const NOTE_TINTS = [
-  'rgba(255, 235, 170, 0.16)',
-  'rgba(180, 220, 255, 0.14)',
-  'rgba(255, 200, 205, 0.13)',
-  'rgba(195, 240, 205, 0.14)',
-  'rgba(230, 210, 255, 0.14)',
-];
-
-function hashCode(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-// 浮动手感:参数沿用旧长条卡片(OPEN_X+18 / DELETE_X-18 / y±18 / 同一 spring)
-const DRIFT_RIGHT = 150;
-const DRIFT_LEFT = -122;
-const DRIFT_Y = 18;
-const DRIFT_SPRING = { damping: 18, stiffness: 220 };
+const VISIBILITY_PILL: Record<DiaryVisibility, { label: string; tone: 'success' | 'info' | 'neutral' }> = {
+  public: { label: '公开', tone: 'success' },
+  restricted: { label: '指定的人', tone: 'info' },
+  private: { label: '仅自己', tone: 'neutral' },
+};
 
 export default function DiaryListScreen() {
   const token = useAuthStore((s) => s.token);
@@ -106,127 +62,79 @@ export default function DiaryListScreen() {
   return <DiaryList />;
 }
 
-// 便签:一行两张;点按进详情,长按弹操作面板(可见性/加锁/删除)
-function DiaryNote({
+function DiaryCard({
   row,
   unlocked,
   onPress,
   onLongPress,
 }: {
-  row: Row;
+  row: ItemRow;
   unlocked: boolean;
   onPress: () => void;
   onLongPress: () => void;
 }) {
-  const colorScheme = useColorScheme() ?? 'light';
-  const h = hashCode(row.id);
-  const tint = NOTE_TINTS[h % NOTE_TINTS.length];
-  // 每张便签一点随机倾斜,像随手贴上去的
-  const rotate = ((h % 7) - 3) * 0.5;
-
-  // 浮动:拖动跟手、松手回弹(纯手感、无功能);起手 14px 内不抢点按/长按
-  const x = useSharedValue(0);
-  const y = useSharedValue(0);
-  const startX = useSharedValue(0);
-
-  const drift = Gesture.Pan()
-    .minDistance(14)
-    .onBegin(() => {
-      startX.value = x.value;
-    })
-    .onUpdate((event) => {
-      x.value = Math.max(Math.min(startX.value + event.translationX, DRIFT_RIGHT), DRIFT_LEFT);
-      y.value = Math.max(Math.min(event.translationY, DRIFT_Y), -DRIFT_Y);
-    })
-    .onEnd(() => {
-      x.value = withSpring(0, DRIFT_SPRING);
-      y.value = withSpring(0, DRIFT_SPRING);
-    })
-    .onFinalize(() => {
-      x.value = withSpring(0, DRIFT_SPRING);
-      y.value = withSpring(0, DRIFT_SPRING);
-    });
-
-  const driftStyle = useAnimatedStyle(() => ({
-    // 拖动中压过邻居,避免被右侧便签盖住
-    zIndex: x.value !== 0 || y.value !== 0 ? 10 : 0,
-    transform: [
-      { translateX: x.value },
-      { translateY: y.value },
-      { rotateZ: `${rotate}deg` },
-    ],
-  }));
-
+  const { colors } = useTheme();
   const visibility = row.item.visibility as DiaryVisibility;
-  const label = row.kind === 'pending' ? '待同步' : VISIBILITY_LABEL[visibility];
   const isLocked = row.kind === 'entry' && row.item.locked;
-  const shouldHideContent = isLocked && !unlocked;
+  const hideContent = isLocked && !unlocked;
   const remaining = row.kind === 'entry' ? editRemainingMs(row.item.created_at) : 0;
+  const pill = VISIBILITY_PILL[visibility];
 
   return (
-    <GestureDetector gesture={drift}>
-      <Animated.View style={[styles.noteWrap, driftStyle]}>
-        <Pressable
-          onPress={onPress}
-          onLongPress={onLongPress}
-          delayLongPress={300}
-          style={[styles.note, { backgroundColor: tint }]}>
-      <View style={styles.noteTop}>
-        <ThemedText style={styles.noteDate}>
-          {formatDate(row.item.created_at).slice(5)}
-        </ThemedText>
-        {isLocked && (
-          <IconSymbol size={12} name="lock.fill" color={Colors[colorScheme].icon} />
-        )}
+    <Card onPress={onPress} onLongPress={onLongPress} style={styles.entryCard}>
+      <View style={styles.entryTop}>
+        <Text style={[Type.footnote, { color: colors.textSecondary }]}>
+          {formatTime(row.item.created_at)}
+        </Text>
+        <View style={styles.entryTopRight}>
+          {isLocked && <IconSymbol name="lock.fill" size={13} color={colors.textTertiary} />}
+          {row.kind === 'pending' ? (
+            <Pill label="待同步" tone="warning" icon="icloud.slash.fill" />
+          ) : (
+            <Pill label={pill.label} tone={pill.tone} />
+          )}
+        </View>
       </View>
-      {shouldHideContent ? (
-        <ThemedText style={styles.noteLockedText}>🔒 点按解锁查看</ThemedText>
+      {hideContent ? (
+        <View style={styles.lockedBody}>
+          <IconSymbol name="lock.fill" size={16} color={colors.textTertiary} />
+          <Text style={[Type.subhead, { color: colors.textTertiary }]}>已加锁 · 点按解锁查看</Text>
+        </View>
       ) : (
-        <ThemedText
-          numberOfLines={6}
-          style={[styles.noteContent, { color: Colors[colorScheme].text }]}>
+        <Text style={[Type.callout, styles.entryContent, { color: colors.text }]} numberOfLines={6}>
           {row.item.content}
-        </ThemedText>
+        </Text>
       )}
-      <View style={styles.noteBottom}>
-        {remaining > 0 ? (
-          <ThemedText style={styles.noteEdit}>⏳{formatRemaining(remaining)}</ThemedText>
-        ) : (
-          <View />
-        )}
-        <ThemedText
-          style={[
-            styles.badge,
-            row.kind === 'pending' && styles.badgePending,
-            visibility === 'public' && styles.badgePublic,
-            visibility === 'restricted' && styles.badgeRestricted,
-            visibility === 'private' && styles.badgePrivate,
-          ]}>
-          {label}
-        </ThemedText>
-      </View>
-        </Pressable>
-      </Animated.View>
-    </GestureDetector>
+      {remaining > 0 && (
+        <View style={styles.entryFooter}>
+          <IconSymbol name="hourglass" size={12} color={colors.textTertiary} />
+          <Text style={[Type.caption1, { color: colors.textTertiary }]}>
+            还可修改 {formatRemaining(remaining)}
+          </Text>
+        </View>
+      )}
+    </Card>
   );
 }
 
 function DiaryList() {
   const insets = useSafeAreaInsets();
-  const colorScheme = useColorScheme() ?? 'light';
+  const { colors, scheme } = useTheme();
   const { entries, pending, loading, error, refresh, remove, setVisibility, setLocked } =
     useDiaryStore();
   const diaryBg = useSettingsStore((s) => s.diaryBg);
-  const [status, setStatus] = useState<string | null>(null);
+  const lockPattern = useSettingsStore((s) => s.lockPattern);
+  const userId = useAuthStore((s) => s.userId);
+  const { status, cardCount, refresh: refreshProfile } = useProfileStore();
+
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   // 手势锁验证门:待执行动作暂存,图案验证通过后放行
-  const lockPattern = useSettingsStore((s) => s.lockPattern);
   const [lockGate, setLockGate] = useState<(() => void) | null>(null);
   const [lockError, setLockError] = useState(false);
   const [unlockedDiaryIds, setUnlockedDiaryIds] = useState<Set<string>>(() => new Set());
-  // 长按便签弹出的操作面板
-  const [actionRow, setActionRow] = useState<Row | null>(null);
+  // 长按卡片弹出的操作面板
+  const [actionRow, setActionRow] = useState<ItemRow | null>(null);
 
   useEffect(() => {
     refresh();
@@ -234,88 +142,122 @@ function DiaryList() {
 
   useFocusEffect(
     useCallback(() => {
-      api
-        .getMyStatus()
-        .then((r) => setStatus(r.status))
-        .catch(() => {});
-    }, []),
+      refreshProfile(userId).catch(() => {});
+    }, [refreshProfile, userId]),
   );
 
-  const allRows: Row[] = [
-    ...pending.map((p): Row => ({ kind: 'pending', id: p.local_id, item: p })),
-    ...entries.map((e): Row => ({ kind: 'entry', id: e.id, item: e })),
-  ];
-  // 有日记的日期(本地时区),供月历打点
-  const markedDates = new Set(allRows.map((r) => dateKey(parseUtc(r.item.created_at))));
-  const rows = selectedDate
-    ? allRows.filter((r) => dateKey(parseUtc(r.item.created_at)) === selectedDate)
-    : allRows;
-
-  const confirmDelete = (row: Row) => {
-    Alert.alert(
-      row.kind === 'pending' ? '删除这篇未同步日记？' : '删除这篇日记？',
-      row.kind === 'pending'
-        ? '它还没有上传，删除后不可恢复。'
-        : '衍生的对话对与人格卡片会一起删除，不可恢复。',
-      [
-        { text: '取消', style: 'cancel' },
-        { text: '删除', style: 'destructive', onPress: () => remove(row.id) },
-      ],
+  const items = useMemo<ItemRow[]>(() => {
+    const all: ItemRow[] = [
+      ...pending.map((p): ItemRow => ({ kind: 'pending', id: p.local_id, item: p })),
+      ...entries.map((e): ItemRow => ({ kind: 'entry', id: e.id, item: e })),
+    ];
+    return all.sort(
+      (a, b) => parseUtc(b.item.created_at).getTime() - parseUtc(a.item.created_at).getTime(),
     );
+  }, [pending, entries]);
+
+  // 有日记的日期(本地时区),供月历打点
+  const markedDates = useMemo(
+    () => new Set(items.map((r) => dateKey(parseUtc(r.item.created_at)))),
+    [items],
+  );
+
+  const rows = useMemo<Row[]>(() => {
+    const filtered = selectedDate
+      ? items.filter((r) => dateKey(parseUtc(r.item.created_at)) === selectedDate)
+      : items;
+    const out: Row[] = [];
+    let lastKey: string | null = null;
+    for (const r of filtered) {
+      const key = dateKey(parseUtc(r.item.created_at));
+      if (key !== lastKey) {
+        out.push({ kind: 'header', id: `h-${key}`, label: dayLabel(key) });
+        lastKey = key;
+      }
+      out.push(r);
+    }
+    return out;
+  }, [items, selectedDate]);
+
+  const confirmDelete = async (row: ItemRow) => {
+    const ok = await dialog.confirm({
+      title: row.kind === 'pending' ? '删除这篇未同步日记?' : '删除这篇日记?',
+      message:
+        row.kind === 'pending'
+          ? '它还没有上传,删除后不可恢复。'
+          : '衍生的对话对与人格卡片会一起删除,不可恢复。',
+      confirmText: '删除',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await remove(row.id);
+      haptic.success();
+    } catch (e) {
+      dialog.alert('删除失败', e instanceof Error ? e.message : String(e));
+    }
   };
 
   // 加锁/解锁(解锁需先验证图案,锁才不形同虚设)
-  const toggleLock = (row: Row) => {
+  const toggleLock = async (row: ItemRow) => {
     if (row.kind !== 'entry') return;
     if (!row.item.locked) {
       if (!lockPattern) {
-        Alert.alert('先设置解锁图案', '加锁前需要先设置一个手势图案。', [
-          { text: '取消', style: 'cancel' },
-          {
-            text: '去设置',
-            onPress: () => router.push({ pathname: '/pattern-setup', params: { mode: 'set' } }),
-          },
+        const idx = await dialog.show('先设置解锁图案', '加锁前需要先设置一个手势图案。', [
+          { label: '取消', style: 'cancel' },
+          { label: '去设置' },
         ]);
+        if (idx === 1) router.push({ pathname: '/pattern-setup', params: { mode: 'set' } });
         return;
       }
-      setLocked(row.id, true)
+      try {
+        await setLocked(row.id, true);
+        setUnlockedDiaryIds((prev) => {
+          const next = new Set(prev);
+          next.delete(row.id);
+          return next;
+        });
+        haptic.success();
+      } catch {
+        dialog.alert('加锁失败', '请稍后再试。');
+      }
+      return;
+    }
+    setLockError(false);
+    setLockGate(() => () => {
+      setLocked(row.id, false)
         .then(() => {
           setUnlockedDiaryIds((prev) => {
             const next = new Set(prev);
             next.delete(row.id);
             return next;
           });
-          Alert.alert('已加锁', '之后打开这篇日记需要先绘制手势图案。');
         })
-        .catch(() => Alert.alert('加锁失败', '请稍后再试。'));
-    } else {
-      setLockError(false);
-      setLockGate(() => () => {
-        setLocked(row.id, false)
-          .then(() => {
-            setUnlockedDiaryIds((prev) => {
-              const next = new Set(prev);
-              next.delete(row.id);
-              return next;
-            });
-            Alert.alert('已取消加锁');
-          })
-          .catch(() => Alert.alert('解锁失败', '请稍后再试。'));
-      });
-    }
+        .catch(() => dialog.alert('解锁失败', '请稍后再试。'));
+    });
   };
 
-  const changeVisibility = (row: Row, visibility: DiaryVisibility) => {
-    // 「指定」需要选人:已同步的日记跳白名单选择页;
+  const changeVisibility = (row: ItemRow, visibility: DiaryVisibility) => {
+    // 「指定的人」需要选人:已同步的日记跳白名单选择页;
     // 未同步的本地日记没有服务器 id,先仅切换档位
     if (visibility === 'restricted' && row.kind === 'entry') {
       router.push({ pathname: '/visibility-picker', params: { diaryId: row.id } });
       return;
     }
-    setVisibility(row.id, visibility).catch(() => {});
+    setVisibility(row.id, visibility).catch(() => dialog.alert('修改失败', '请稍后再试。'));
   };
 
-  const openDetail = (row: Row) => {
+  const redistill = async (row: ItemRow) => {
+    if (row.kind !== 'entry') return;
+    try {
+      await api.redistillDiary(row.id);
+      dialog.alert('已重新开始学习', '化身会在后台重新读这篇日记,约半分钟后人格卡片更新。');
+    } catch (e) {
+      dialog.alert('操作失败', e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const openDetail = (row: ItemRow) => {
     if (row.kind !== 'entry') return;
     const go = () => {
       router.push({
@@ -327,7 +269,7 @@ function DiaryList() {
         },
       });
     };
-    // 短按加锁日记:验证通过直接进详情页,锁状态保持不变
+    // 点按加锁日记:验证通过直接进详情页,锁状态保持不变
     if (row.item.locked && lockPattern) {
       setLockError(false);
       setLockGate(() => go);
@@ -336,174 +278,190 @@ function DiaryList() {
     go();
   };
 
+  const count = items.length;
+  const subtitle =
+    count === 0 ? '写下第一篇,化身就开始学你' : `${count} 篇日记${cardCount ? ` · ${cardCount} 张人格卡片` : ''}`;
+
   return (
     <ScreenBackground setting={diaryBg}>
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
-          <ThemedText type="title">日记</ThemedText>
-          <View style={styles.headerActions}>
-            <Pressable
-              style={styles.headerButton}
-              onPress={() => setShowCalendar((v) => !v)}
-              hitSlop={8}>
-              <IconSymbol
-                size={24}
-                name="calendar"
-                color={showCalendar || selectedDate ? Colors[colorScheme].tint : Colors[colorScheme].icon}
-              />
-            </Pressable>
-            <Pressable style={styles.headerButton} onPress={() => router.push('/appearance')} hitSlop={8}>
-              <IconSymbol size={24} name="paintbrush.fill" color={Colors[colorScheme].icon} />
-            </Pressable>
-          </View>
-        </View>
-
-        {showCalendar && (
-          <DiaryCalendar
-            marked={markedDates}
-            selected={selectedDate}
-            onSelect={(d) => setSelectedDate(d)}
-          />
-        )}
-        {selectedDate && (
-          <Pressable style={styles.filterChip} onPress={() => setSelectedDate(null)}>
-            <ThemedText style={styles.filterChipText}>
-              {selectedDate} · {rows.length} 篇 ✕
-            </ThemedText>
-          </Pressable>
-        )}
-
-        <Pressable style={styles.statusChip} onPress={() => router.push('/status-editor')}>
-          <ThemedText style={styles.statusText}>
-            {status ? `今日：${status}` : '今日：'}
-          </ThemedText>
-        </Pressable>
-
-        {error && <Text style={styles.error}>{error}</Text>}
-
         <FlatList
           data={rows}
-          numColumns={2}
           keyExtractor={(row) => row.id}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} />}
-          columnWrapperStyle={styles.noteRow}
-          contentContainerStyle={[
-            styles.listContent,
-            rows.length === 0 && styles.emptyContainer,
-            { paddingBottom: insets.bottom + 96 },
-          ]}
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.textSecondary} />}
+          contentContainerStyle={[styles.listContent, rows.length === 0 && styles.listGrow]}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <View>
+              <LargeHeader
+                title="日记"
+                subtitle={subtitle}
+                right={
+                  <>
+                    <IconButton
+                      name="calendar"
+                      active={showCalendar || !!selectedDate}
+                      onPress={() => setShowCalendar((v) => !v)}
+                      accessibilityLabel="按日期筛选"
+                    />
+                    <IconButton
+                      name="paintbrush.fill"
+                      onPress={() => router.push('/appearance')}
+                      accessibilityLabel="外观"
+                    />
+                  </>
+                }
+              />
+
+              {showCalendar && (
+                <DiaryCalendar marked={markedDates} selected={selectedDate} onSelect={setSelectedDate} />
+              )}
+
+              <View style={styles.chipsRow}>
+                <Pressable
+                  onPress={() => router.push('/status-editor')}
+                  style={({ pressed }) => [
+                    styles.statusChip,
+                    { backgroundColor: status ? colors.tintSoft : colors.fill, opacity: pressed ? 0.7 : 1 },
+                  ]}>
+                  <IconSymbol
+                    name="face.smiling"
+                    size={15}
+                    color={status ? colors.tint : colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      Type.subhead,
+                      { color: status ? colors.tint : colors.textSecondary, fontWeight: '600' },
+                    ]}
+                    numberOfLines={1}>
+                    {status ? status : '今天怎么样?设个状态'}
+                  </Text>
+                </Pressable>
+                {selectedDate && (
+                  <Pressable
+                    onPress={() => setSelectedDate(null)}
+                    style={({ pressed }) => [styles.filterChip, { backgroundColor: colors.fill, opacity: pressed ? 0.7 : 1 }]}>
+                    <Text style={[Type.footnote, { color: colors.textSecondary }]}>{selectedDate}</Text>
+                    <IconSymbol name="xmark" size={11} color={colors.textSecondary} weight="bold" />
+                  </Pressable>
+                )}
+              </View>
+
+              {error && <Banner tone="warning" message={error} style={styles.banner} />}
+            </View>
+          }
           ListEmptyComponent={
             !loading ? (
-              <ThemedText style={styles.emptyText}>
-                还没有日记。写下的每一篇，都会成为化身更像你的材料。
-              </ThemedText>
+              <EmptyState
+                icon="book.fill"
+                title={selectedDate ? '这天没有日记' : '还没有日记'}
+                message={
+                  selectedDate
+                    ? '换个日期看看,或者清除筛选。'
+                    : '写下的每一篇,都会成为化身更像你的材料。想到什么写什么,不用工整。'
+                }
+                action={
+                  selectedDate ? undefined : (
+                    <Button title="写第一篇" icon="square.and.pencil" onPress={() => router.push('/diary-editor')} />
+                  )
+                }
+              />
             ) : null
           }
-          renderItem={({ item }) => (
-            <DiaryNote
-              row={item}
-              unlocked={item.kind === 'entry' && unlockedDiaryIds.has(item.id)}
-              onPress={() => openDetail(item)}
-              onLongPress={() => setActionRow(item)}
-            />
-          )}
+          renderItem={({ item }) =>
+            item.kind === 'header' ? (
+              <Text style={[Type.footnote, styles.dayHeader, { color: colors.textSecondary }]}>{item.label}</Text>
+            ) : (
+              <DiaryCard
+                row={item}
+                unlocked={item.kind === 'entry' && unlockedDiaryIds.has(item.id)}
+                onPress={() => openDetail(item)}
+                onLongPress={() => setActionRow(item)}
+              />
+            )
+          }
         />
 
-        {/* 长按便签的操作面板 */}
-        <Modal visible={actionRow !== null} transparent animationType="fade">
-          <Pressable style={styles.actionOverlay} onPress={() => setActionRow(null)}>
-            {/* 内层 Pressable 吃掉点击,避免点面板本体误关闭 */}
-            <Pressable
-              style={[
-                styles.actionPanel,
-                { backgroundColor: colorScheme === 'dark' ? '#1c1e22' : '#fff' },
-              ]}
-              onPress={() => {}}>
-              {actionRow?.kind === 'entry' && (
-                <>
-                  <ThemedText style={styles.actionTitle}>谁能看到这篇</ThemedText>
-                  <View style={styles.actionPills}>
-                    {VISIBILITY_OPTIONS.map((option) => {
-                      const active =
-                        (actionRow.item.visibility as DiaryVisibility) === option.key;
-                      return (
-                        <Pressable
-                          key={option.key}
-                          style={[
-                            styles.actionPill,
-                            active && { backgroundColor: Colors[colorScheme].tint },
-                          ]}
-                          onPress={() => {
-                            const row = actionRow;
-                            setActionRow(null);
-                            changeVisibility(row, option.key);
-                          }}>
-                          <Text
-                            style={[
-                              styles.actionPillText,
-                              active && {
-                                color: colorScheme === 'dark' ? '#151718' : '#fff',
-                              },
-                            ]}>
-                            {option.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                  <Pressable
-                    style={styles.actionItem}
-                    onPress={() => {
-                      const row = actionRow;
-                      setActionRow(null);
-                      toggleLock(row);
-                    }}>
-                    <IconSymbol size={17} name="lock.fill" color={Colors[colorScheme].icon} />
-                    <ThemedText style={styles.actionItemText}>
-                      {actionRow.item.locked ? '取消加锁' : '加锁(手势图案)'}
-                    </ThemedText>
-                  </Pressable>
-                </>
-              )}
-              <Pressable
-                style={styles.actionItem}
-                onPress={() => {
-                  const row = actionRow;
-                  setActionRow(null);
-                  if (row) confirmDelete(row);
-                }}>
-                <ThemedText style={[styles.actionItemText, styles.actionDelete]}>
-                  删除这篇日记
-                </ThemedText>
-              </Pressable>
-            </Pressable>
-          </Pressable>
-        </Modal>
+        {/* 写日记 */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="写日记"
+          onPress={() => {
+            haptic.light();
+            router.push('/diary-editor');
+          }}
+          style={({ pressed }) => [
+            styles.fab,
+            floatingShadow(scheme),
+            { backgroundColor: colors.tint, transform: [{ scale: pressed ? 0.94 : 1 }] },
+          ]}>
+          <IconSymbol name="square.and.pencil" size={24} color={colors.onTint} weight="semibold" />
+        </Pressable>
 
-        {/* 手势锁验证弹层 */}
-        <Modal visible={lockGate !== null} transparent animationType="fade">
-          <View style={styles.lockOverlay}>
-            <View style={[styles.lockPanel, { backgroundColor: colorScheme === 'dark' ? '#1c1e22' : '#fff' }]}>
-              <ThemedText style={styles.lockTitle}>绘制图案以解锁私密日记</ThemedText>
-              {lockError && <Text style={styles.lockErrorText}>图案不对,再试一次</Text>}
-              <PatternLock
-                onComplete={(pattern) => {
-                  if (pattern === lockPattern) {
-                    const go = lockGate;
-                    setLockGate(null);
-                    go?.();
-                  } else {
-                    setLockError(true);
-                  }
-                }}
-              />
-              <Pressable onPress={() => setLockGate(null)} style={styles.lockCancel}>
-                <ThemedText style={styles.lockCancelText}>取消</ThemedText>
-              </Pressable>
-            </View>
+        {/* 长按卡片的操作面板 */}
+        <ActionSheet
+          visible={actionRow !== null}
+          onClose={() => setActionRow(null)}
+          title={actionRow ? formatTime(actionRow.item.created_at) + ' 的日记' : undefined}
+          header={
+            actionRow ? (
+              <View style={styles.sheetVisibility}>
+                <Text style={[Type.footnote, { color: colors.textSecondary }]}>谁能看到这篇</Text>
+                <SegmentedControl<DiaryVisibility>
+                  options={VISIBILITY_OPTIONS}
+                  value={actionRow.item.visibility as DiaryVisibility}
+                  onChange={(v) => {
+                    const row = actionRow;
+                    setActionRow(null);
+                    setTimeout(() => changeVisibility(row, v), 180);
+                  }}
+                />
+              </View>
+            ) : null
+          }
+          actions={
+            actionRow?.kind === 'entry'
+              ? [
+                  {
+                    label: actionRow.item.locked ? '取消加锁' : '加锁(手势图案)',
+                    icon: actionRow.item.locked ? 'lock.open.fill' : 'lock.fill',
+                    onPress: () => toggleLock(actionRow),
+                  },
+                  {
+                    label: '让化身重新学习这篇',
+                    icon: 'arrow.triangle.2.circlepath',
+                    onPress: () => redistill(actionRow),
+                  },
+                  { label: '删除这篇日记', icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) },
+                ]
+              : actionRow
+                ? [{ label: '删除这篇日记', icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) }]
+                : []
+          }
+        />
+
+        {/* 手势锁验证 */}
+        <Sheet visible={lockGate !== null} onClose={() => setLockGate(null)} title="绘制图案以解锁">
+          <View style={styles.lockBody}>
+            <Text style={[Type.footnote, { color: lockError ? colors.danger : colors.textSecondary }]}>
+              {lockError ? '图案不对,再试一次' : '这篇日记设了手势锁'}
+            </Text>
+            <PatternLock
+              onComplete={(pattern) => {
+                if (pattern === lockPattern) {
+                  const go = lockGate;
+                  setLockGate(null);
+                  haptic.success();
+                  setTimeout(() => go?.(), 180);
+                } else {
+                  haptic.error();
+                  setLockError(true);
+                }
+              }}
+            />
           </View>
-        </Modal>
-
+        </Sheet>
       </View>
     </ScreenBackground>
   );
@@ -511,137 +469,51 @@ function DiaryList() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
+  listContent: { paddingBottom: 120 },
+  listGrow: { flexGrow: 1 },
+  chipsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 12,
+    gap: 8,
+    paddingHorizontal: 20,
+    marginBottom: 10,
+    flexWrap: 'wrap',
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  headerButton: {
-    width: 44,
-    height: 44,
+  statusChip: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: Radius.pill,
+    maxWidth: '100%',
   },
   filterChip: {
-    alignSelf: 'flex-start',
-    marginHorizontal: 24,
-    marginBottom: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 13,
-    backgroundColor: 'rgba(127,127,127,0.13)',
-  },
-  filterChipText: { fontSize: 13, opacity: 0.75 },
-  statusChip: {
-    alignSelf: 'flex-start',
-    marginHorizontal: 24,
-    marginBottom: 18,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: 'rgba(127,127,127,0.13)',
-  },
-  statusText: { fontSize: 20, fontWeight: '600', opacity: 0.78 },
-  error: { color: '#d47a2d', paddingHorizontal: 24, paddingBottom: 8, fontSize: 12 },
-  listContent: { paddingTop: 8, paddingHorizontal: 16 },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { opacity: 0.55, paddingHorizontal: 42, textAlign: 'center', lineHeight: 22 },
-  // 一行两张便签
-  noteRow: { gap: 12, marginBottom: 12 },
-  noteWrap: { flex: 1 },
-  note: {
-    height: 172,
-    borderRadius: 14,
-    paddingHorizontal: 13,
-    paddingVertical: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255, 250, 235, 0.22)',
-    shadowColor: '#000',
-    shadowOpacity: 0.10,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 1,
-  },
-  noteTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 7,
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: Radius.pill,
   },
-  noteDate: { fontSize: 12, opacity: 0.5, lineHeight: 16 },
-  noteContent: { flex: 1, fontSize: 14, lineHeight: 19 },
-  noteLockedText: { flex: 1, fontSize: 13, opacity: 0.5, paddingTop: 6, lineHeight: 19 },
-  noteBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  banner: { marginHorizontal: 20, marginBottom: 10 },
+  dayHeader: { marginHorizontal: 20, marginTop: 14, marginBottom: 8, fontWeight: '600' },
+  entryCard: { marginHorizontal: 20, marginBottom: 10 },
+  entryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  entryTopRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  entryContent: { lineHeight: 23 },
+  lockedBody: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
+  entryFooter: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10 },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 22,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
     alignItems: 'center',
-    marginTop: 8,
-  },
-  noteEdit: { fontSize: 11, opacity: 0.55, lineHeight: 14 },
-  badge: {
-    overflow: 'hidden',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '700',
-  },
-  badgePublic: { color: '#6fc6a5', backgroundColor: 'rgba(111,198,165,0.12)' },
-  badgeRestricted: { color: '#78aee5', backgroundColor: 'rgba(120,174,229,0.15)' },
-  badgePrivate: { color: '#a9a9b8', backgroundColor: 'rgba(169,169,184,0.14)' },
-  badgePending: { color: '#d89b3d', backgroundColor: 'rgba(216,155,61,0.15)' },
-  // 长按操作面板
-  actionOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingBottom: 34,
-  },
-  actionPanel: {
-    borderRadius: 22,
-    paddingVertical: 18,
-    paddingHorizontal: 18,
-    gap: 4,
-  },
-  actionTitle: { fontSize: 13, opacity: 0.55, marginBottom: 8 },
-  actionPills: { flexDirection: 'row', gap: 8, marginBottom: 10 },
-  actionPill: {
-    flex: 1,
-    minHeight: 38,
-    borderRadius: 19,
     justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(127,127,127,0.13)',
   },
-  actionPillText: { fontSize: 14, fontWeight: '600', color: 'rgba(127,127,127,0.95)' },
-  actionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minHeight: 46,
-    paddingHorizontal: 4,
-  },
-  actionItemText: { fontSize: 15, fontWeight: '600' },
-  actionDelete: { color: '#ca4543' },
-  lockOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-  },
-  lockPanel: {
-    borderRadius: 22,
-    paddingVertical: 24,
-    paddingHorizontal: 12,
-  },
-  lockTitle: { textAlign: 'center', fontSize: 15, fontWeight: '600', marginBottom: 6 },
-  lockErrorText: { textAlign: 'center', fontSize: 12, color: '#c60', marginBottom: 4 },
-  lockCancel: { alignItems: 'center', marginTop: 10 },
-  lockCancelText: { fontSize: 13, opacity: 0.5 },
+  sheetVisibility: { gap: 8, marginBottom: 14, paddingHorizontal: 4 },
+  lockBody: { alignItems: 'center', gap: 6, paddingBottom: 8 },
 });

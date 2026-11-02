@@ -1,9 +1,9 @@
+import { useHeaderHeight } from '@react-navigation/elements';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,30 +12,29 @@ import {
   View,
 } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { HeaderButton } from '@/components/ui/header-button';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { SegmentedControl } from '@/components/ui/segmented';
+import { Radius, Type, webNoOutline } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
+import { dialog } from '@/lib/dialog';
+import { formatLongDate, parseUtc } from '@/lib/format';
+import { haptic } from '@/lib/haptics';
 import type { DiaryVisibility, UserSummary } from '@/lib/types';
 import { useDiaryStore } from '@/stores/diary-store';
 
 const VISIBILITY_OPTIONS: { key: DiaryVisibility; label: string; hint: string }[] = [
-  { key: 'public', label: '公开', hint: '化身可对所有访客使用这篇日记的内容' },
-  { key: 'restricted', label: '指定的人', hint: '仅勾选的用户与你的化身聊天时可用' },
+  { key: 'public', label: '公开', hint: '化身可以对所有访客使用这篇日记学到的东西(不会复述原文)' },
+  { key: 'restricted', label: '指定的人', hint: '只有勾选的用户和你的化身聊天时才会用到' },
   { key: 'private', label: '仅自己', hint: '只用于你和自己化身的对话' },
 ];
 
 const EDIT_WINDOW_MS = 24 * 3600 * 1000;
 
-function parseUtc(iso: string) {
-  return new Date(iso.endsWith('Z') || iso.includes('+') ? iso : `${iso}Z`);
-}
-
 export default function DiaryEditorScreen() {
-  const colorScheme = useColorScheme() ?? 'light';
-  const tint = Colors[colorScheme].tint;
-  const onTint = colorScheme === 'dark' ? '#151718' : '#fff';
+  const { colors } = useTheme();
+  const headerHeight = useHeaderHeight();
   const add = useDiaryStore((s) => s.add);
   const edit = useDiaryStore((s) => s.edit);
 
@@ -66,6 +65,7 @@ export default function DiaryEditorScreen() {
   }, [visibility, users.length]);
 
   const toggleUser = (id: string) => {
+    haptic.selection();
     setAllowed((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -74,9 +74,11 @@ export default function DiaryEditorScreen() {
     });
   };
 
+  const dirty = content.trim().length > 0 && content.trim() !== (initialContent ?? '').trim();
+
   const save = async () => {
     const text = content.trim();
-    if (!text || !canEdit) return;
+    if (!text || !canEdit || saving) return;
     setSaving(true);
     try {
       if (isEditing && diaryId) {
@@ -84,126 +86,127 @@ export default function DiaryEditorScreen() {
       } else {
         await add(text, visibility, visibility === 'restricted' ? [...allowed] : []);
       }
+      haptic.success();
       router.back();
     } catch (e) {
-      Alert.alert('保存失败', String(e));
+      haptic.error();
+      dialog.alert('保存失败', e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
   };
 
+  const close = async () => {
+    if (dirty && canEdit) {
+      const ok = await dialog.confirm({
+        title: '放弃这次编辑?',
+        message: '写了的内容不会保存。',
+        confirmText: '放弃',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    router.back();
+  };
+
   const selectedHint = VISIBILITY_OPTIONS.find((o) => o.key === visibility)?.hint;
+  const dateLine = formatLongDate(createdAt ? parseUtc(createdAt) : new Date());
+  const title = isEditing ? (canEdit ? '修改日记' : '日记') : '写日记';
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior="padding">
-      <Stack.Screen options={{ title: isEditing ? (canEdit ? '修改日记' : '日记详情') : '写日记' }} />
-      <ThemedView style={styles.container}>
-        {isEditing && (
-          <ThemedText style={styles.hint}>
-            {canEdit
-              ? '⏳ 日记落笔 24 小时内可修改;修改后化身会重新学习这篇内容。'
-              : '这篇日记已超过 24 小时,内容已定格,不可再修改。'}
-          </ThemedText>
-        )}
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}>
+      <Stack.Screen
+        options={{
+          title,
+          headerLeft: () => <HeaderButton title={canEdit ? '取消' : '关闭'} onPress={close} />,
+          headerRight: () =>
+            canEdit ? (
+              <HeaderButton title="保存" bold loading={saving} disabled={!dirty} onPress={save} />
+            ) : null,
+        }}
+      />
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.meta}>
+          <Text style={[Type.footnote, { color: colors.textSecondary }]}>{dateLine}</Text>
+          {isEditing && (
+            <View style={styles.metaHint}>
+              <IconSymbol
+                name={canEdit ? 'hourglass' : 'lock.fill'}
+                size={12}
+                color={colors.textTertiary}
+              />
+              <Text style={[Type.caption1, { color: colors.textTertiary }]}>
+                {canEdit ? '落笔 24 小时内可修改,改后化身会重新学习' : '已超过 24 小时,内容定格'}
+              </Text>
+            </View>
+          )}
+        </View>
+
         <TextInput
-          style={[styles.input, { color: Colors[colorScheme].text }]}
+          style={[Type.body, styles.input, webNoOutline, { color: colors.text }]}
           multiline
           placeholder="今天发生了什么?你怎么想?"
-          placeholderTextColor="rgba(127,127,127,0.6)"
+          placeholderTextColor={colors.placeholder}
+          selectionColor={colors.tint}
           value={content}
           onChangeText={setContent}
           editable={canEdit}
-          autoFocus={canEdit}
+          autoFocus={canEdit && !isEditing}
+          scrollEnabled
         />
 
-        {/* 编辑模式只改内容;可见性用日记卡片右滑调整 */}
+        {/* 编辑模式只改内容;可见性在日记卡片长按菜单里调整 */}
         {!isEditing && (
-        <View style={styles.visibilityRow}>
-          {VISIBILITY_OPTIONS.map((o) => {
-            const active = visibility === o.key;
-            return (
-              <Pressable
-                key={o.key}
-                style={[styles.chip, active && { backgroundColor: tint }]}
-                onPress={() => setVisibility(o.key)}>
-                <Text style={[styles.chipText, active && { color: onTint }]}>{o.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        )}
-        {!isEditing && <ThemedText style={styles.hint}>{selectedHint}</ThemedText>}
+          <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.separator }]}>
+            <Text style={[Type.footnote, styles.panelTitle, { color: colors.textSecondary }]}>谁能看到这篇</Text>
+            <SegmentedControl<DiaryVisibility> options={VISIBILITY_OPTIONS} value={visibility} onChange={setVisibility} />
+            <Text style={[Type.caption1, styles.hint, { color: colors.textTertiary }]}>{selectedHint}</Text>
 
-        {!isEditing && visibility === 'restricted' && (
-          <ScrollView style={styles.userList}>
-            {users.length === 0 ? (
-              <ThemedText style={styles.hint}>暂无其他用户可选</ThemedText>
-            ) : (
-              users.map((u) => {
-                const checked = allowed.has(u.id);
-                return (
-                  <Pressable key={u.id} style={styles.userRow} onPress={() => toggleUser(u.id)}>
-                    <View style={[styles.checkbox, checked && { backgroundColor: tint, borderColor: tint }]}>
-                      {checked && <Text style={[styles.checkmark, { color: onTint }]}>✓</Text>}
-                    </View>
-                    <ThemedText>{u.username}</ThemedText>
-                  </Pressable>
-                );
-              })
+            {visibility === 'restricted' && (
+              <ScrollView style={styles.userList} keyboardShouldPersistTaps="handled">
+                {users.length === 0 ? (
+                  <Text style={[Type.footnote, { color: colors.textTertiary }]}>暂无其他用户可选</Text>
+                ) : (
+                  users.map((u) => {
+                    const checked = allowed.has(u.id);
+                    return (
+                      <Pressable key={u.id} style={styles.userRow} onPress={() => toggleUser(u.id)}>
+                        <IconSymbol
+                          name={checked ? 'checkmark.circle.fill' : 'circle'}
+                          size={22}
+                          color={checked ? colors.tint : colors.textTertiary}
+                        />
+                        <Text style={[Type.callout, { color: colors.text }]}>{u.username}</Text>
+                      </Pressable>
+                    );
+                  })
+                )}
+              </ScrollView>
             )}
-          </ScrollView>
+          </View>
         )}
-
-        {canEdit && (
-          <Pressable
-            style={[
-              styles.saveButton,
-              { backgroundColor: tint, opacity: content.trim() ? 1 : 0.4 },
-            ]}
-            disabled={!content.trim() || saving}
-            onPress={save}>
-            {saving ? (
-              <ActivityIndicator color={onTint} />
-            ) : (
-              <Text style={[styles.saveText, { color: onTint }]}>保存</Text>
-            )}
-          </Pressable>
-        )}
-      </ThemedView>
+      </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  container: { flex: 1, padding: 20 },
-  input: { flex: 1, fontSize: 17, lineHeight: 26, textAlignVertical: 'top' },
-  visibilityRow: { flexDirection: 'row', gap: 8, marginBottom: 6 },
-  chip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 16,
-    backgroundColor: 'rgba(127,127,127,0.12)',
-  },
-  chipText: { fontSize: 13 },
-  hint: { fontSize: 12, opacity: 0.5, marginBottom: 8 },
-  userList: { maxHeight: 140, marginBottom: 8 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: 'rgba(127,127,127,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkmark: { fontSize: 13, fontWeight: '700' },
-  saveButton: {
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
+  container: { flex: 1, paddingHorizontal: 20, paddingTop: 12 },
+  meta: { gap: 4, marginBottom: 10 },
+  metaHint: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  input: { flex: 1, lineHeight: 27, textAlignVertical: 'top', paddingTop: 0 },
+  panel: {
+    borderRadius: Radius.lg,
+    padding: 14,
     marginBottom: 12,
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  saveText: { fontSize: 16, fontWeight: '600' },
+  panelTitle: { marginLeft: 2 },
+  hint: { marginLeft: 2, lineHeight: 16 },
+  userList: { maxHeight: 160 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
 });

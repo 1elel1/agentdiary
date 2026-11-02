@@ -3,17 +3,21 @@
 
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { PatternLock } from '@/components/pattern-lock';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { HeaderButton } from '@/components/ui/header-button';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { haptic } from '@/lib/haptics';
 import { useSettingsStore } from '@/stores/settings-store';
 
 type Step = 'verify' | 'draw' | 'confirm';
 
 export default function PatternSetupScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const { colors } = useTheme();
   const disable = mode === 'disable';
   const { lockPattern, setLockPattern } = useSettingsStore();
 
@@ -23,7 +27,7 @@ export default function PatternSetupScreen() {
 
   const hint =
     step === 'verify'
-      ? '请先绘制当前图案验证身份'
+      ? '先绘制当前图案验证身份'
       : step === 'draw'
         ? '绘制新图案(至少连 4 个点)'
         : '再绘制一次确认';
@@ -32,11 +36,13 @@ export default function PatternSetupScreen() {
     setError(null);
     if (step === 'verify') {
       if (pattern !== lockPattern) {
+        haptic.error();
         setError('图案不对,再试一次');
         return;
       }
       if (disable) {
         await setLockPattern(null);
+        haptic.success();
         router.back();
         return;
       }
@@ -46,35 +52,48 @@ export default function PatternSetupScreen() {
     if (step === 'draw') {
       setFirstDraw(pattern);
       setStep('confirm');
+      haptic.light();
       return;
     }
-    // confirm
     if (pattern !== firstDraw) {
+      haptic.error();
       setError('两次图案不一致,请重新绘制');
       setFirstDraw(null);
       setStep('draw');
       return;
     }
     await setLockPattern(pattern);
+    haptic.success();
     router.back();
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <Stack.Screen options={{ title: disable ? '关闭手势锁' : '设置手势锁' }} />
-      <ThemedText style={styles.hint}>{hint}</ThemedText>
-      {error && <ThemedText style={styles.error}>{error}</ThemedText>}
+    <View style={styles.container}>
+      <Stack.Screen
+        options={{
+          title: disable ? '关闭手势锁' : '设置手势锁',
+          headerLeft: () => <HeaderButton title="取消" onPress={() => router.back()} />,
+        }}
+      />
+      <View style={[styles.iconWrap, { backgroundColor: colors.tintSoft }]}>
+        <IconSymbol name={disable ? 'lock.open.fill' : 'lock.fill'} size={26} color={colors.tint} />
+      </View>
+      <Text style={[Type.title3, styles.hint, { color: colors.text }]}>{hint}</Text>
+      <Text style={[Type.footnote, styles.error, { color: error ? colors.danger : 'transparent' }]}>
+        {error ?? ' '}
+      </Text>
       <PatternLock onComplete={onComplete} />
-      <ThemedText style={styles.note}>
-        手势锁只存在这台设备上,用于打开「仅自己」可见的日记。忘记图案时,重新登录即可重置。
-      </ThemedText>
-    </ThemedView>
+      <Text style={[Type.footnote, styles.note, { color: colors.textTertiary }]}>
+        手势锁只存在这台设备上,用于打开加了锁的日记。忘记图案时,重新登录即可重置。
+      </Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: 32, paddingHorizontal: 24 },
-  hint: { textAlign: 'center', fontSize: 16, marginBottom: 8 },
-  error: { textAlign: 'center', fontSize: 13, color: '#c60', marginBottom: 8 },
-  note: { fontSize: 12, opacity: 0.45, textAlign: 'center', marginTop: 28, lineHeight: 18 },
+  container: { flex: 1, paddingTop: 28, paddingHorizontal: 24, alignItems: 'center' },
+  iconWrap: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  hint: { textAlign: 'center' },
+  error: { textAlign: 'center', marginTop: 6, marginBottom: 18 },
+  note: { textAlign: 'center', marginTop: 32, lineHeight: 18 },
 });

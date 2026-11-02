@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, Keyboard, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ThemedText } from '@/components/themed-text';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Composer } from '@/components/chat/composer';
+import { MessageBubble } from '@/components/chat/message-bubble';
+import { Banner } from '@/components/ui/banner';
+import { EmptyState } from '@/components/ui/empty-state';
 import { api } from '@/lib/api';
+import { haptic } from '@/lib/haptics';
 import type { DirectMessageItem } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -31,10 +23,7 @@ export function DirectChat({
   username: string;
   keyboardOffset?: number;
 }) {
-  const scheme = useColorScheme() ?? 'light';
   const insets = useSafeAreaInsets();
-  const tint = Colors[scheme].tint;
-  const onTint = scheme === 'dark' ? '#151718' : '#fff';
   const myId = useAuthStore((s) => s.userId);
 
   const [messages, setMessages] = useState<DirectMessageItem[]>([]);
@@ -100,6 +89,7 @@ export function DirectChat({
       setMessages((prev) => prev.filter((m) => m.id !== temp.id));
       setDraft(text); // 发送失败把草稿还回去
       setError(e instanceof Error ? e.message : String(e));
+      haptic.error();
     } finally {
       setSending(false);
     }
@@ -118,107 +108,35 @@ export function DirectChat({
         data={messages}
         keyExtractor={(m) => m.id}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         contentContainerStyle={[styles.list, messages.length === 0 && styles.listEmpty]}
         ListEmptyComponent={
-          <ThemedText style={styles.empty}>
-            AI 裁判觉得你们聊得来,真人对话已解锁。这里是 {username} 本人——说句话吧。
-          </ThemedText>
+          <EmptyState
+            icon="person.2.fill"
+            title={`这里是 ${username} 本人`}
+            message="AI 裁判觉得你们聊得来,真人对话已解锁。说句话吧。"
+          />
         }
-        renderItem={({ item }) =>
-          item.sender_id === myId ? (
-            <View style={[styles.bubble, styles.bubbleMe, { backgroundColor: tint }]}>
-              <Text style={[styles.bubbleText, { color: onTint }]}>{item.content}</Text>
-            </View>
-          ) : (
-            <View style={[styles.bubble, styles.bubblePeer]}>
-              <Text style={[styles.bubbleText, { color: Colors[scheme].text }]}>
-                {item.content}
-              </Text>
-            </View>
-          )
-        }
+        renderItem={({ item }) => <MessageBubble text={item.content} mine={item.sender_id === myId} />}
       />
 
-      {error && <Text style={styles.error}>出错了:{error}</Text>}
+      {error && <Banner tone="danger" message={error} style={styles.banner} />}
 
-      <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <TextInput
-          style={[styles.input, { color: Colors[scheme].text }]}
-          placeholder={`给 ${username} 发消息...`}
-          placeholderTextColor="rgba(127,127,127,0.62)"
-          value={draft}
-          onChangeText={setDraft}
-          onSubmitEditing={submit}
-          returnKeyType="send"
-        />
-        <Pressable
-          style={[
-            styles.sendBtn,
-            { backgroundColor: tint, opacity: draft.trim() && !sending ? 1 : 0.4 },
-          ]}
-          disabled={!draft.trim() || sending}
-          onPress={submit}>
-          <Text style={[styles.sendText, { color: onTint }]}>发送</Text>
-        </Pressable>
-      </View>
+      <Composer
+        value={draft}
+        onChange={setDraft}
+        onSend={submit}
+        placeholder={`给 ${username} 发消息…`}
+        disabled={sending}
+        bottomInset={!kbVisible}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  list: { paddingHorizontal: 16, paddingVertical: 8, flexGrow: 1 },
+  list: { paddingHorizontal: 14, paddingVertical: 10, flexGrow: 1 },
   listEmpty: { justifyContent: 'center' },
-  empty: {
-    opacity: 0.5,
-    textAlign: 'center',
-    paddingHorizontal: 40,
-    fontSize: 18,
-    lineHeight: 28,
-  },
-  bubble: {
-    maxWidth: '78%',
-    borderRadius: 18,
-    paddingHorizontal: 15,
-    paddingVertical: 11,
-    marginVertical: 4,
-  },
-  bubbleMe: { alignSelf: 'flex-end', borderBottomRightRadius: 5 },
-  bubblePeer: {
-    alignSelf: 'flex-start',
-    borderBottomLeftRadius: 5,
-    backgroundColor: 'rgba(127,127,127,0.12)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  bubbleText: { fontSize: 16, lineHeight: 22 },
-  error: { color: '#c44', paddingHorizontal: 20, paddingVertical: 4 },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    backgroundColor: 'rgba(10,10,14,0.02)',
-  },
-  input: {
-    flex: 1,
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: 'rgba(127,127,127,0.3)',
-    borderRadius: 23,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 16,
-    backgroundColor: 'rgba(127,127,127,0.08)',
-  },
-  sendBtn: {
-    minWidth: 70,
-    minHeight: 46,
-    borderRadius: 23,
-    paddingHorizontal: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendText: { fontSize: 15, fontWeight: '600' },
+  banner: { marginHorizontal: 12, marginBottom: 8 },
 });

@@ -26,6 +26,26 @@ export interface UserSummary {
   is_builtin: boolean;
   status: string | null;
   avatar_updated_at: string | null;
+  // 对外形象的单行摘要;null = 对方还没写
+  persona_excerpt: string | null;
+}
+
+// 化身资料页:对外形象全文在这里
+export interface UserProfile {
+  id: string;
+  username: string;
+  is_builtin: boolean;
+  card_count: number;
+  status: string | null;
+  persona: string | null;
+  avatar_updated_at: string | null;
+}
+
+// 自己的对外形象
+export interface PersonaOut {
+  persona: string | null;
+  updated_at: string | null;
+  max_chars: number;
 }
 
 export interface ChatHistoryItem {
