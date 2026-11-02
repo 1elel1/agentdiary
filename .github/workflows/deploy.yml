@@ -10,10 +10,11 @@ name: Deploy to server
 #   GitHub → Settings → Secrets and variables → Actions → New repository secret
 # 服务器地址 / 用户名有默认值,也可用仓库变量 DEPLOY_HOST / DEPLOY_USER 覆盖。
 #
-# 两种触发方式,都不会在普通 push 时自动部署(HANDOFF 的约定是分支先在服务器上验证、再合 main):
-#   1. 推一个 deploy-* 标签:git tag deploy-v4.0.0 && git push origin deploy-v4.0.0
-#      (标签打在哪个提交,就部署哪个提交;工作流文件不必在 main 上,云端 session 也能这样触发)
-#   2. 工作流进了 main 之后,Actions → Deploy to server → Run workflow 选分支
+# 三种触发方式,普通 push 不会部署(HANDOFF 的约定是分支先在服务器上验证、再合 main):
+#   1. 提交信息里带 [deploy] 再 push(main / claude/** / deploy/** 分支):部署该提交。
+#      这是云端 session 唯一可用的方式——它的 git 代理能推分支、推不了标签
+#   2. 推一个 deploy-* 标签:git tag deploy-v4.0.0 && git push origin deploy-v4.0.0
+#   3. 工作流进了 main 之后,Actions → Deploy to server → Run workflow 选分支
 #
 # 对服务器的要求:ubuntu 用户可免密 sudo(Lighthouse 默认如此);仓库在 /home/ubuntu/agentdiary。
 # 部署会把服务器仓库的同名分支强制指到本次提交(GitHub 是唯一事实来源),
@@ -21,6 +22,10 @@ name: Deploy to server
 
 on:
   push:
+    branches:
+      - main
+      - 'claude/**'
+      - 'deploy/**'
     tags:
       - 'deploy-*'
   workflow_dispatch:
@@ -43,6 +48,8 @@ env:
 
 jobs:
   deploy:
+    # 分支 push 只在提交信息带 [deploy] 时真正部署;标签与手动触发总是部署
+    if: ${{ github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, '[deploy]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -105,7 +112,7 @@ jobs:
 
       - name: 把代码推到服务器仓库
         run: |
-          # 标签触发时服务器上统一落在 deploy 分支;手动触发时用所选分支名
+          # 标签触发时服务器上统一落在 deploy 分支;分支 push / 手动触发时用分支名
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then BRANCH="deploy"; else BRANCH="${GITHUB_REF_NAME}"; fi
           echo "服务器分支:${BRANCH}(来源 ${GITHUB_REF_TYPE} ${GITHUB_REF_NAME} @ ${GITHUB_SHA::8})"
           ssh server "cd ${REPO_DIR} && if ! git diff --quiet || ! git diff --cached --quiet; then echo '::error::服务器仓库有未提交的改动,先在服务器上处理掉再部署:'; git status --short; exit 1; fi"

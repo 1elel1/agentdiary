@@ -105,8 +105,9 @@ sudo journalctl -u agentdiary-api -n 100 --no-pager
 **A. GitHub Actions(推荐,之后每次部署都能在 GitHub 上一键跑,云端 session 也能触发)**
 1. 仓库 Settings → Secrets and variables → Actions → New repository secret:
    名字 `DEPLOY_SSH_KEY`,值 = 本机 `~/.ssh/test.pem` 全文(只需做这一次)
-2. 打开 Actions 里那次失败的「Deploy to server」运行(标签 `deploy-v4.0.0`,只差 secret)→ Re-run failed jobs;
-   以后部署就是 `git tag deploy-xxx && git push origin deploy-xxx`,或工作流进 main 后在 Actions 页点 Run workflow
+2. 打开 Actions 里那次失败的「Deploy to server」运行(分支最新提交,只差 secret)→ Re-run failed jobs;
+   以后部署就是提交信息带 `[deploy]` 再 push、或 `git tag deploy-xxx && git push origin deploy-xxx`、
+   或工作流进 main 后在 Actions 页点 Run workflow
 3. 绿了就去 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象
 
 **B. 登服务器手动跑**
