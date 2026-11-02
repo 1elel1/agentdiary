@@ -37,6 +37,38 @@ sudo journalctl -u agentdiary-api -n 100 --no-pager
 
 `proxy_read_timeout 300s` 同理:蒸馏和化身对话都是长请求,默认 60s 会截断。
 
+## 网页版(同域名)
+
+`client` 的 Expo 工程导出成静态站,和 API 共用 `43.130.127.226.sslip.io`:
+
+```bash
+cd client && npx expo export --platform web      # 产物在 client/dist
+# dist/ 内容上传到服务器 /var/www/agentdiary
+```
+
+不用装 App,浏览器直接打开就是完整前端(登录、日记、对话、设置都能用),
+演示时很方便。连的是同一个后端和同一份数据。
+
+**维护陷阱:nginx 用正则而不是前缀匹配分流接口**
+
+```nginx
+location ~ ^/(auth|chat|diaries|dm|health|judge|persona-cards|users|docs|redoc|openapi\.json)(/|$)
+```
+
+两个原因:
+
+1. 前缀 `location /chat` 会把网页端的 `/chats` 路由一起吃掉(只差一个字母),
+   `(/|$)` 这个边界才挡得住
+2. **新增后端路由时必须同步这个正则**,否则请求会落到静态站、返回 index.html
+   —— 症状是接口莫名其妙返回一坨 HTML
+
+其余路径走 `try_files $uri $uri.html $uri/ /index.html`:Expo 静态导出把每个
+路由生成一个 `.html`,动态路由(`/visit/xxx`)没有对应文件,兜底回 index.html
+交给客户端路由。
+
+同机还跑着 `dazi` / `offline-aid` / `travelingmate` 三个站点(各自独立子域名),
+改 nginx 时注意不要动到它们。
+
 ## 云防火墙
 
 腾讯云轻量应用服务器的防火墙在**实例之外**,虚拟机内的 iptables / ufw 看不到也
