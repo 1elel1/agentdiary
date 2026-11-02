@@ -23,7 +23,13 @@ class AuthResponse(BaseModel):
 
 
 @router.post("/register")
-def register(body: Credentials, session: Session = Depends(get_session)) -> AuthResponse:
+def register(
+    body: Credentials, request: Request, session: Session = Depends(get_session)
+) -> AuthResponse:
+    # 注册接口公网开放且持续被扫:按来源 IP 限 5 个/小时,挡脚本批量开号
+    # (每个号都能拿到化身对话的 LLM 配额)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(f"register:{client_ip}", max_calls=5, window_seconds=3600)
     username = body.username.strip()
     if not (2 <= len(username) <= 20):
         raise HTTPException(status_code=422, detail="用户名需 2~20 个字符")

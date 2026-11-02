@@ -29,8 +29,14 @@ class User(SQLModel, table=True):
     # 化身状态(微信状态式):24 小时后自动过期,给化身「今天」的实在感
     status_text: str | None = Field(default=None)
     status_updated_at: datetime | None = Field(default=None)
-    # 自定义头像:文件存 server/avatars/{id}.img,此时间戳兼作客户端缓存指纹
+    # 自定义头像:文件存数据目录 avatars/{id}.img,此时间戳兼作客户端缓存指纹
     avatar_updated_at: datetime | None = Field(default=None)
+    # 对外形象:用户亲自写的「希望别人怎么了解我、希望怎么被聊」。访客和化身对话时
+    # 注入 system prompt,决定化身呈现的侧重、语气与分寸;事实依据仍来自人格卡片,
+    # 它不替代日记,也不会让化身编造卡片里没有的经历。对访客可见(本来就是写给
+    # 别人看的),不属于日记级敏感数据
+    public_persona: str | None = Field(default=None)
+    persona_updated_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=_now)
 
 

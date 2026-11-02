@@ -1,6 +1,7 @@
 # AgentDiary 后端(FastAPI)
 
-Phase 0 骨架:日记 CRUD + 蒸馏 pipeline v1(占位)+ 化身自对话(占位)。
+日记 CRUD + 蒸馏 pipeline v1(逆向对话对 + 人格卡片)+ 化身对话(自聊 / 访客)+
+对外形象 + AI 裁判 + 解锁后的真人私信。单进程 uvicorn + SQLite。
 
 ## 首次安装
 
@@ -8,7 +9,7 @@ Phase 0 骨架:日记 CRUD + 蒸馏 pipeline v1(占位)+ 化身自对话(占位)
 cd server
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements.txt pytest
 ```
 
 ## 启动
@@ -22,16 +23,56 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 `--host 0.0.0.0` 必须,否则 iPad 无法通过局域网访问。
 交互式 API 文档:http://localhost:8000/docs
 
+## 测试
+
+```bash
+cd server && .venv/bin/python -m pytest
+```
+
+`tests/` 用 FastAPI TestClient 跑完整请求链路,LLM 用桩替代(不花钱、不联网),
+数据库建在临时目录。覆盖:注册/登录/限流、对外形象读写与校验、日记 → 蒸馏 →
+卡片 → 级联删除、自聊/访客 prompt 的注入内容与隐私边界、LLM 挂掉时的 503。
+`deploy/deploy.sh` 部署前会先跑它。
+
 ## 接口
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /diaries | 日记列表 |
-| POST | /diaries | 写日记(自动触发蒸馏 v1) |
-| DELETE | /diaries/{id} | 删除日记(级联删除对话对与人格卡片) |
-| POST | /chat | 与化身对话(占位回应) |
-| GET | /persona-cards | 查看人格卡片(含出处) |
+| POST | /auth/register · /auth/login · /auth/logout | 注册(5 个/小时/IP)、登录(10 次/10 分钟/IP)、登出 |
+| GET | /auth/me | 当前用户 |
+| GET | /users | 其他用户列表(卡片数、状态、对外形象摘要;名人化身在前) |
+| GET | /users/{id}/profile | 化身资料页:对外形象全文、状态、卡片数 |
+| GET | /users/{id}/avatar | 头像(不鉴权,uuid 路径不可猜) |
+| GET/PUT | /users/me/persona | **对外形象**(≤ 600 字;空 = 清除) |
+| GET/PUT | /users/me/status | 今日状态(24 小时过期) |
+| PUT | /users/me/username · /users/me/password · /users/me/avatar | 改名 / 改密(吊销其他设备)/ 头像(base64,≤ 8MB) |
+| DELETE | /users/me | 注销账号,级联删除全部数据(需密码) |
+| GET/POST | /diaries | 日记列表 / 写日记(触发后台蒸馏;20 篇/天) |
+| PUT | /diaries/{id} | 改内容(落笔 24 小时内;旧衍生数据作废并重蒸馏) |
+| PATCH | /diaries/{id} | 改可见性(public / restricted + 白名单 / private)、手势锁标记 |
+| GET | /diaries/{id}/allowed | restricted 白名单 |
+| POST | /diaries/{id}/distill | 手动重跑蒸馏 |
+| DELETE | /diaries/{id} | 删除日记(级联删除对话对与卡片) |
+| POST | /chat | 与化身对话(不传 target_user_id = 自聊;30 条/小时)。LLM 不可用返回 503 |
+| GET | /chat/history | 对话历史,按 (化身主人, 访客) 隔离;limit ≤ 200 |
+| GET | /persona-cards | 自己的人格卡片(含出处日记 id) |
+| GET/POST | /judge/{id} · /judge/{id}/evaluate | AI 裁判状态 / 评估(≥ 5 句才能评,≥ 70 分解锁) |
+| GET/POST | /dm · /dm/{id} | 已解锁的真人会话列表 / 收发私信 |
 | GET | /health | 健康检查 |
+
+**新增顶级路由时同步 `deploy/nginx-agentdiary.conf` 的正则**,否则请求落到静态站。
+
+## 化身 prompt 的三路输入
+
+| 输入 | 来源 | 决定什么 |
+|---|---|---|
+| 人格卡片 | 日记蒸馏(带置信度与出处) | 说的是不是真的:观点、偏好、经历都要有卡片依据 |
+| 说话范例 | 日记切片逆向构造的对话对 | 怎么说话:句长、语气词、收尾方式。**只在自聊注入**(含日记原话) |
+| 对外形象 | 用户在「我 → 对外形象」亲自写 | 怎么呈现:先聊什么、什么语气、避开什么。访客模式注入,自聊也带上 |
+
+访客只拿得到 public 日记(或 restricted 且对其开放的日记)衍生的卡片;prompt 明确
+禁止复述日记原文与可识别的私人细节。没有卡片但有对外形象时,化身靠它撑起对话
+(冷启动不再只会说「我一无所知」)。
 
 ## LLM 接入
 
@@ -64,8 +105,14 @@ vLLM 都实现这个协议,换模型只改环境变量,请求体不动。
 进程内计数、重启归零,真实对账看日志里每次调用的 `usage` 行。
 
 - 写日记 → FastAPI BackgroundTasks 后台蒸馏(逆向构造对话对 + 抽取人格卡片),
-  完成后卡片才会出现
-- 化身对话 → 按新近度检索人格卡片注入 system prompt 生成回应
+  完成后卡片才会出现;蒸馏日志在 **数据目录** 的 `distill.log`(随
+  `AGENTDIARY_DATA_DIR` 外置,不在代码目录)
+- 化身对话 → 按新近度检索人格卡片 + 对外形象注入 system prompt 生成回应
+
+## 数据目录
+
+`AGENTDIARY_DATA_DIR`(默认 `server/`,**部署时必须指到代码目录之外**):
+`agentdiary.db`、`avatars/`、`distill.log`。备份见 `deploy/backup-db.sh`。
 
 ## 待接入(按 CLAUDE.md §2)
 

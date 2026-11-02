@@ -9,21 +9,21 @@
 """
 
 import logging
-from pathlib import Path
 
 from sqlmodel import Session
 
 from .. import llm
+from ..config import DATA_DIR
 from ..db import engine
 from ..models import DialoguePair, DiaryEntry, PersonaCard
 from .privacy import sanitize
 
 logger = logging.getLogger(__name__)
-# 蒸馏日志单独落盘:后台任务的失败在控制台里看不见,必须可追查
+# 蒸馏日志单独落盘:后台任务的失败在控制台里看不见,必须可追查。
+# 落在数据目录而不是代码目录:和 DB、头像一样随 AGENTDIARY_DATA_DIR 外置,
+# 重新部署 / git 操作不会碰到它
 if not logger.handlers:
-    _handler = logging.FileHandler(
-        Path(__file__).resolve().parent.parent.parent / "distill.log", encoding="utf-8"
-    )
+    _handler = logging.FileHandler(DATA_DIR / "distill.log", encoding="utf-8")
     _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)

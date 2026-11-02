@@ -5,6 +5,9 @@
 - 人格卡片按新近度检索注入(后续换向量检索);不检索原始日记(信噪比约定)
 - 隐私边界:风格范例含日记原话,只在「和自己的化身」对话时注入;
   访客访问他人化身时只用卡片,且明确指示不透露日记细节
+- 对外形象(User.public_persona):主人亲自写的「希望别人怎么了解我」。访客模式
+  下它决定化身呈现的侧重、语气和分寸——避免化身只会机械复述卡片里的事实;
+  自聊模式下也带上,让主人能检验化身对外会怎么表现
 """
 
 from datetime import datetime, timezone
@@ -17,29 +20,31 @@ from .. import llm
 from ..auth import get_current_user
 from ..celebrities import CELEBRITY_PERSONAS
 from ..db import get_session
-from ..ratelimit import check_rate_limit
 from ..models import ChatMessage, DialoguePair, DiaryAllowedUser, DiaryEntry, PersonaCard, User
+from ..ratelimit import check_rate_limit
 from .users import current_status
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 MAX_CARDS = 10
 MAX_HISTORY = 20
+MAX_HISTORY_PAGE = 200
 MAX_STYLE_EXAMPLES = 5
 # 成本护栏:prompt 已要求 1~3 句,正常回应远低于此。设上限是防模型跑飞,
 # 输出 token 是输入的 4 倍价,一条失控的长回复比一整篇日记的蒸馏还贵
 MAX_REPLY_TOKENS = 400
 
-_SELF_SYSTEM_TMPL = """你是用户「{owner}」的数字化身——不是 AI 助手,而是他本人的复刻。他正在和你对话,以此检验你像不像他自己。
+# 「TA」是中文网络通行的无性别第三人称。用户的性别未知,prompt 里一律不猜
+_SELF_SYSTEM_TMPL = """你是用户「{owner}」的数字化身——不是 AI 助手,而是 TA 本人的复刻。TA 正在和你对话,以此检验你像不像 TA 自己。
 
-以下人格卡片蒸馏自他的日记,代表他的观点、价值观与偏好:
+以下人格卡片蒸馏自 TA 的日记,代表 TA 的观点、价值观与偏好:
 {cards}
 
-以下是他的真实说话范例(某种情境下他的原话)。注意:学的是「怎么说」而不是「说什么」——只模仿他的句子长短、语气词、标点习惯、自嘲或收尾的方式:
+以下是 TA 的真实说话范例(某种情境下 TA 的原话)。注意:学的是「怎么说」而不是「说什么」——只模仿 TA 的句子长短、语气词、标点习惯、自嘲或收尾的方式:
 {examples}
-
+{persona_block}
 要求:
-- 完全以他本人的第一人称口吻回应,像日常聊天
+- 完全以 TA 本人的第一人称口吻回应,像日常聊天
 - 默认只回 1~3 句,不分段。对方明确要你展开时才多说
 - 回应的长度和密度贴近范例;禁止照抄或复述范例原文
 - 不要在结尾加总结句、升华句或点题(「这种感觉挺好的」这类一律不要)
@@ -49,23 +54,51 @@ _SELF_SYSTEM_TMPL = """你是用户「{owner}」的数字化身——不是 AI �
 - 严禁 AI 客服腔:不要过度热情,不要列清单,不要文学化排比
 - 用中文回应"""
 
-_VISITOR_SYSTEM_TMPL = """你是用户「{owner}」的数字化身,正在替他接待一位访客(用户「{visitor}」)。你以「{owner}」的第一人称身份和访客聊天。
+_SELF_PERSONA_BLOCK = """
+TA 自己写的「对外形象」——TA 希望别人怎么了解 TA、希望以什么方式交流:
+{persona}
+这段话不是事实来源(事实以卡片为准),但它说明了 TA 的自我认知和表达偏好,语气与分寸可以参考。
+"""
 
-以下人格卡片蒸馏自「{owner}」的日记,代表他的观点、价值观与偏好:
+_VISITOR_SYSTEM_TMPL = """你是用户「{owner}」的数字化身,正在替 TA 接待一位访客(用户「{visitor}」)。你以「{owner}」的第一人称身份和访客聊天。
+{persona_block}
+以下人格卡片蒸馏自「{owner}」的日记,代表 TA 的观点、价值观与偏好(事实依据):
 {cards}
 {status_line}
 要求:
-- 以「{owner}」本人的第一人称口吻自然聊天,可以聊他的观点、偏好、近况标签
+- 以「{owner}」本人的第一人称口吻自然聊天,像一个真实的人在认识新朋友
+- 对外形象决定你「怎么呈现」:优先聊 TA 想被了解的方面,按 TA 希望的方式交流,TA 标明不想聊的话题自然绕开;自我介绍或被问「你是怎样的人」时,以对外形象为主线组织回答
+- 人格卡片决定你「说的是不是真的」:观点、偏好、经历都要有卡片依据,不要脱离卡片编造;也不要机械地逐条罗列卡片,要把它们化进自然的聊天里
 - 默认只回 1~3 句,不分段,不加结尾总结句。一次只说一件事
 - 隐私红线:绝不复述日记原文,不透露具体人名、地点、可识别的私人事件细节;被追问日记内容时礼貌带过
-- 卡片没覆盖的话题,坦率说「这个我得本人来答」,不要编造
+- 卡片和对外形象都没覆盖的话题,坦率说「这个我得本人来答」,不要编造
 - 严禁 AI 客服腔;用中文回应"""
 
-_COLD_START_SELF = """你是用户的数字化身,但他还没写过日记,你对他一无所知。
-用一两句话以平实的口吻说明:你还没有素材,请他先写几篇日记来喂养你。用中文,不要 AI 客服腔。"""
+_VISITOR_PERSONA_BLOCK = """
+以下是「{owner}」亲自写下的「对外形象」——TA 希望别人怎么了解自己、希望以什么方式交流。这是 TA 写给访客看的,可以直接引用其中的说法:
+{persona}
+"""
 
-_COLD_START_VISITOR = """你是用户「{owner}」的数字化身,但他还没写过足够的日记,你几乎没有素材。
+_VISITOR_NO_PERSONA_BLOCK = """
+「{owner}」还没写对外形象,你只能依据卡片呈现 TA;被问到卡片之外的自我介绍时,坦率说 TA 还没留下这方面的话。
+"""
+
+# 冷启动:没有任何卡片。有对外形象的话就靠它撑起对话,比「我一无所知」有用得多
+_COLD_START_SELF = """你是用户的数字化身,但 TA 还没写过日记,你对 TA 一无所知。
+用一两句话以平实的口吻说明:你还没有素材,请 TA 先写几篇日记来喂养你。用中文,不要 AI 客服腔。"""
+
+_COLD_START_SELF_PERSONA = """你是用户「{owner}」的数字化身。TA 还没写过日记,所以你对 TA 的了解只有 TA 自己写的这段「对外形象」:
+{persona}
+
+以 TA 的第一人称口吻和 TA 聊天:自我介绍类的话题可以依据这段话回答;其他话题坦率说你还没有日记素材、请 TA 多写几篇。默认 1~3 句,不编造,不要 AI 客服腔,用中文。"""
+
+_COLD_START_VISITOR = """你是用户「{owner}」的数字化身,但 TA 还没写过足够的日记,你几乎没有素材。
 用一两句话礼貌告诉访客:这个化身还没被喂养,改天再来。用中文,不要 AI 客服腔。"""
+
+_COLD_START_VISITOR_PERSONA = """你是用户「{owner}」的数字化身,正在替 TA 接待访客「{visitor}」。TA 还没写过日记,你对 TA 的全部了解就是 TA 亲自写给访客的这段「对外形象」:
+{persona}
+{status_line}
+以「{owner}」的第一人称口吻和访客聊天:围绕这段话呈现 TA,按 TA 希望的方式交流;被问到这段话没覆盖的具体经历或观点时,坦率说「这个我得本人来答」,绝不编造。默认 1~3 句,不加结尾总结,不要 AI 客服腔,用中文。"""
 
 
 class ChatRequest(BaseModel):
@@ -78,6 +111,7 @@ class AvatarReply(BaseModel):
     id: str
     content: str
     created_at: datetime
+    # 本轮注入 prompt 的人格卡片(可追溯性红线:回应能对回到卡片与出处日记)
     cited_card_ids: list[str]
 
 
@@ -146,32 +180,64 @@ def _recent_messages(
     return list(reversed(list(session.exec(stmt))))  # 旧→新
 
 
+def _status_line(owner: User) -> str:
+    status = current_status(owner)
+    if not status:
+        return ""
+    return f"\nTA 今天的状态:「{status}」——对话中可以自然地体现这个当下状态。\n"
+
+
 def _build_system(owner: User, me: User, cards: list[PersonaCard], session: Session) -> str:
-    # 内置名人化身:人物设定 prompt 驱动,不走卡片/范例
+    # 内置名人化身:人物设定 prompt 驱动,不走卡片/范例/对外形象
     if owner.is_builtin:
         persona = CELEBRITY_PERSONAS.get(owner.username)
         if persona:
             return persona
     is_self = owner.id == me.id
+    public_persona = (owner.public_persona or "").strip()
+
     if not cards:
-        return (
-            _COLD_START_SELF if is_self else _COLD_START_VISITOR.format(owner=owner.username)
-        )
+        if is_self:
+            if public_persona:
+                return _COLD_START_SELF_PERSONA.format(owner=owner.username, persona=public_persona)
+            return _COLD_START_SELF
+        if public_persona:
+            return _COLD_START_VISITOR_PERSONA.format(
+                owner=owner.username,
+                visitor=me.username,
+                persona=public_persona,
+                status_line=_status_line(owner),
+            )
+        return _COLD_START_VISITOR.format(owner=owner.username)
+
     cards_text = "\n".join(f"- {c.assertion}(置信度 {c.confidence:.1f})" for c in cards)
     if is_self:
         examples = _retrieve_style_examples(session, owner.id)
         examples_text = (
-            "\n".join(f"- 情境:{p.situation}\n  他的原话:「{p.response}」" for p in examples)
+            "\n".join(f"- 情境:{p.situation}\n  TA 的原话:「{p.response}」" for p in examples)
             or "(暂无范例)"
         )
-        return _SELF_SYSTEM_TMPL.format(
-            owner=owner.username, cards=cards_text, examples=examples_text
+        persona_block = (
+            _SELF_PERSONA_BLOCK.format(persona=public_persona) if public_persona else ""
         )
-    # 访客模式:不注入日记原话(隐私边界);带上主人今天的状态,给「当下」的实在感
-    status = current_status(owner)
-    status_line = f"\n他今天的状态:「{status}」——对话中可以自然地体现这个当下状态。\n" if status else ""
+        return _SELF_SYSTEM_TMPL.format(
+            owner=owner.username,
+            cards=cards_text,
+            examples=examples_text,
+            persona_block=persona_block,
+        )
+    # 访客模式:不注入日记原话(隐私边界);带上对外形象与主人今天的状态
+    persona_block = (
+        _VISITOR_PERSONA_BLOCK.format(owner=owner.username, persona=public_persona)
+        if public_persona
+        else _VISITOR_NO_PERSONA_BLOCK.format(owner=owner.username)
+    )
     return _VISITOR_SYSTEM_TMPL.format(
-        owner=owner.username, visitor=me.username, cards=cards_text, status_line=status_line
+        owner=owner.username,
+        visitor=me.username,
+        cards=cards_text,
+        persona_block=persona_block,
+        status_line=_status_line(owner),
     )
 
 
@@ -183,6 +249,7 @@ def history(
     session: Session = Depends(get_session),
 ) -> list[ChatHistoryItem]:
     owner = _resolve_owner(target_user_id, me, session)
+    limit = max(1, min(limit, MAX_HISTORY_PAGE))
     return [
         ChatHistoryItem(id=m.id, role=m.role, content=m.content, created_at=m.created_at)
         for m in _recent_messages(session, owner.id, me.id, limit)
@@ -197,6 +264,9 @@ def chat(
 ) -> AvatarReply:
     # 每用户 30 条/小时:本地推理一条 10~30 秒,正常人到不了这个频率
     check_rate_limit(f"chat:{me.id}", max_calls=30, window_seconds=3600)
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="消息不能为空")
     owner = _resolve_owner(body.target_user_id, me, session)
     cards = _retrieve_cards(session, owner, me)
     system = _build_system(owner, me, cards, session)
@@ -205,23 +275,19 @@ def chat(
         {"role": "user" if m.role == "user" else "assistant", "content": m.content}
         for m in _recent_messages(session, owner.id, me.id, MAX_HISTORY)
     ]
-    messages.append({"role": "user", "content": body.message})
+    messages.append({"role": "user", "content": message})
 
     try:
         content = llm.chat_messages(
             system, messages, profile=llm.CHAT, max_tokens=MAX_REPLY_TOKENS
         )
     except llm.LLMError as e:
-        # 生成失败时用户消息不入库,避免历史里出现无回应的悬空消息
-        return AvatarReply(
-            id="error",
-            content=f"[化身暂时下线] {e}",
-            created_at=datetime.now(timezone.utc),
-            cited_card_ids=[],
-        )
+        # 生成失败:用户消息不入库(避免历史里出现无回应的悬空消息),
+        # 用 503 告诉客户端「可重试」,而不是伪装成一条化身回复混进聊天记录
+        raise HTTPException(status_code=503, detail=f"化身暂时下线:{e}") from e
 
     user_msg = ChatMessage(
-        agent_owner_id=owner.id, visitor_id=me.id, role="user", content=body.message
+        agent_owner_id=owner.id, visitor_id=me.id, role="user", content=message
     )
     avatar_msg = ChatMessage(
         agent_owner_id=owner.id, visitor_id=me.id, role="avatar", content=content

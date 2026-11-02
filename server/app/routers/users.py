@@ -1,4 +1,4 @@
-"""用户发现与状态、账号资料(改名/改密/头像)。"""
+"""用户发现与资料:状态、对外形象、账号(改名/改密/头像/注销)。"""
 
 import base64
 from datetime import datetime, timedelta, timezone
@@ -28,6 +28,12 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 STATUS_TTL = timedelta(hours=24)
 
+# 对外形象上限。够写「我是谁 / 在意什么 / 希望怎么聊 / 不想聊什么」四段,
+# 又不至于长到把 system prompt 挤成一篇自传(每轮对话都要带上它)
+MAX_PERSONA_CHARS = 600
+# 列表页摘要长度:一行能放下的量
+PERSONA_EXCERPT_CHARS = 60
+
 # 头像文件落在数据目录(与 agentdiary.db 同级),部署时随 AGENTDIARY_DATA_DIR
 # 一起外置;时间戳存在 User.avatar_updated_at
 MAX_AVATAR_BYTES = 8 * 1024 * 1024
@@ -45,6 +51,26 @@ def current_status(user: User) -> str | None:
     return user.status_text
 
 
+def persona_excerpt(user: User) -> str | None:
+    """对外形象的单行摘要,给列表页用。"""
+    if not user.public_persona:
+        return None
+    one_line = " ".join(user.public_persona.split())
+    if len(one_line) <= PERSONA_EXCERPT_CHARS:
+        return one_line
+    return one_line[: PERSONA_EXCERPT_CHARS - 1].rstrip() + "…"
+
+
+def _card_counts(session: Session) -> dict[str, int]:
+    """每个用户的有效卡片数,一条 GROUP BY 查完(原来是每用户一次 COUNT)。"""
+    rows = session.exec(
+        select(PersonaCard.user_id, func.count())
+        .where(PersonaCard.superseded_by == None)  # noqa: E711
+        .group_by(PersonaCard.user_id)
+    ).all()
+    return {user_id: int(count) for user_id, count in rows}
+
+
 class UserSummary(BaseModel):
     id: str
     username: str
@@ -52,6 +78,19 @@ class UserSummary(BaseModel):
     is_builtin: bool  # 内置名人化身
     status: str | None  # 当前有效状态
     avatar_updated_at: datetime | None  # 有值 = 有自定义头像,兼作缓存指纹
+    persona_excerpt: str | None = None  # 对外形象首行摘要;None = 还没写
+
+
+class UserProfile(BaseModel):
+    """访问某个化身前后看到的资料页:对外形象全文在这里。"""
+
+    id: str
+    username: str
+    is_builtin: bool
+    card_count: int
+    status: str | None
+    persona: str | None
+    avatar_updated_at: datetime | None
 
 
 class StatusUpdate(BaseModel):
@@ -77,6 +116,45 @@ def set_status(
 @router.get("/me/status")
 def get_my_status(me: User = Depends(get_current_user)) -> dict:
     return {"status": current_status(me)}
+
+
+class PersonaUpdate(BaseModel):
+    persona: str | None  # None 或空串 = 清除
+
+
+class PersonaOut(BaseModel):
+    persona: str | None
+    updated_at: datetime | None
+    max_chars: int = MAX_PERSONA_CHARS
+
+
+@router.get("/me/persona")
+def get_my_persona(me: User = Depends(get_current_user)) -> PersonaOut:
+    return PersonaOut(persona=me.public_persona, updated_at=me.persona_updated_at)
+
+
+@router.put("/me/persona")
+def set_persona(
+    body: PersonaUpdate,
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> PersonaOut:
+    """写/改对外形象。
+
+    这段话会原样展示给来访的用户,并注入化身的 system prompt。它只影响化身
+    「怎么说、先说什么、避开什么」;「说的是不是事实」仍由人格卡片兜底。
+    """
+    check_rate_limit(f"persona:{me.id}", max_calls=30, window_seconds=3600)
+    if me.is_builtin:
+        raise HTTPException(status_code=403, detail="内置化身不可修改")
+    text = (body.persona or "").strip()
+    if len(text) > MAX_PERSONA_CHARS:
+        raise HTTPException(status_code=422, detail=f"对外形象最多 {MAX_PERSONA_CHARS} 字")
+    me.public_persona = text or None
+    me.persona_updated_at = datetime.now(timezone.utc) if text else None
+    session.add(me)
+    session.commit()
+    return PersonaOut(persona=me.public_persona, updated_at=me.persona_updated_at)
 
 
 class PasswordChange(BaseModel):
@@ -209,7 +287,7 @@ def upload_avatar(
         raise HTTPException(status_code=422, detail="图片太大(上限 8MB)")
     if not (raw[:3] == b"\xff\xd8\xff" or raw[:8] == b"\x89PNG\r\n\x1a\n"):
         raise HTTPException(status_code=422, detail="仅支持 JPG/PNG")
-    AVATAR_DIR.mkdir(exist_ok=True)
+    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
     (AVATAR_DIR / f"{me.id}.img").write_bytes(raw)
     me.avatar_updated_at = datetime.now(timezone.utc)
     session.add(me)
@@ -224,30 +302,56 @@ def get_avatar(user_id: str):
     path = AVATAR_DIR / f"{user_id}.img"
     if not path.exists():
         raise HTTPException(status_code=404, detail="没有头像")
-    head = path.open("rb").read(8)
+    with path.open("rb") as f:
+        head = f.read(8)
     media = "image/png" if head == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
     return FileResponse(path, media_type=media)
+
+
+@router.get("/{user_id}/profile")
+def get_profile(
+    user_id: str,
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> UserProfile:
+    """化身资料页:访客在这里读到对方亲自写的对外形象全文。自己看自己也走这里。"""
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    count = session.exec(
+        select(func.count())
+        .select_from(PersonaCard)
+        .where(PersonaCard.user_id == user.id)
+        .where(PersonaCard.superseded_by == None)  # noqa: E711
+    ).one()
+    return UserProfile(
+        id=user.id,
+        username=user.username,
+        is_builtin=user.is_builtin,
+        card_count=int(count),
+        status=current_status(user),
+        persona=user.public_persona,
+        avatar_updated_at=user.avatar_updated_at,
+    )
 
 
 @router.get("")
 def list_users(
     me: User = Depends(get_current_user), session: Session = Depends(get_session)
 ) -> list[UserSummary]:
-    result = []
-    for user in session.exec(select(User).where(User.id != me.id)):
-        count = session.exec(
-            select(func.count()).select_from(PersonaCard).where(PersonaCard.user_id == user.id)
-        ).one()
-        result.append(
-            UserSummary(
-                id=user.id,
-                username=user.username,
-                card_count=count,
-                is_builtin=user.is_builtin,
-                status=current_status(user),
-                avatar_updated_at=user.avatar_updated_at,
-            )
+    counts = _card_counts(session)
+    result = [
+        UserSummary(
+            id=user.id,
+            username=user.username,
+            card_count=counts.get(user.id, 0),
+            is_builtin=user.is_builtin,
+            status=current_status(user),
+            avatar_updated_at=user.avatar_updated_at,
+            persona_excerpt=persona_excerpt(user),
         )
+        for user in session.exec(select(User).where(User.id != me.id))
+    ]
     # 名人化身排在最前,给冷启动的发现页一个门面
     result.sort(key=lambda u: (not u.is_builtin, u.username))
     return result
