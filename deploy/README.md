@@ -56,8 +56,14 @@ ssh agentdiary "sudo rsync -a --delete /tmp/agentdiary-web/ /var/www/agentdiary/
 名字 `DEPLOY_SSH_KEY`,值 = 本机 `~/.ssh/test.pem` 的完整内容(含 BEGIN / END 两行)。
 地址和用户名默认 `ubuntu@43.130.127.226`,要改就加仓库变量 `DEPLOY_HOST` / `DEPLOY_USER`。
 
-**触发**:Actions → Deploy to server → Run workflow → 选分支(`skip_web` 勾上只更新后端)。
-只手动触发,不绑 push:约定是分支先在服务器上验证、再合 main。
+**触发**(两种,普通 push 都不会触发;约定是分支先在服务器上验证、再合 main):
+
+```bash
+git tag deploy-v4.0.0 && git push origin deploy-v4.0.0   # 标签打在哪个提交就部署哪个提交
+```
+
+工作流进了 main 之后也可以在网页上点:Actions → Deploy to server → Run workflow → 选分支
+(`skip_web` 勾上只更新后端)。标签触发时服务器仓库落在 `deploy` 分支,手动触发时用所选分支名。
 
 注意:它会把服务器仓库的同名分支**强制指到本次提交**(GitHub 是唯一事实来源);服务器
 上有未提交改动时会中止并列出,不会覆盖。
