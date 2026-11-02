@@ -36,6 +36,12 @@
 - 主动提问引擎:识别卡片库低置信区域,每日反问用户 1 题(同时解决日记留存)
 - DPO 对比校准:用户标注「像我/不像我」偏好对,磨掉基座模型的 AI 腔(anti-sycophancy)
 
+**第三路输入:对外形象(public persona,2026-11 新增)**:
+- 用户亲自写的「希望别人怎么了解我、希望怎么被聊」(≤ 600 字),存 `User.public_persona`,对访客可见
+- 访客模式下注入化身 system prompt,决定化身「怎么呈现」:先聊什么、什么语气、避开什么;人格卡片仍决定「说的是不是真的」。目的是让化身不再机械复述卡片事实,而是按用户想要的方式被认识
+- 自聊模式也带上,让用户能检验化身对外会怎么表现;冷启动(还没有卡片)时可以只靠它撑起对话
+- 它不是事实来源,prompt 里明确禁止据此编造卡片之外的经历
+
 **北极星指标**:图灵式盲测——用户看化身回应,判断「这是不是我会说的话」的通过率。
 
 ## 3. MVP 阶段与当前范围
@@ -47,14 +53,24 @@
 | Phase 2 | 匹配 + Agent↔Agent 沙盒(50-100人内测) | 「想认识这个人」≥ 30% |
 | Phase 3 | 真人解锁 + 合规 | 解锁后真人对话持续 ≥ 3 天比例 |
 
-**重要约束:当前只做 Phase 0。不要提前实现匹配、agent 互聊、解锁等 Phase 2/3 功能,哪怕顺手。**
+**范围约束(2026-11 校准到代码现状)**:
+- 当前主线仍是 Phase 0:日记 → 蒸馏 → 单人化身 → 自聊盲测。门槛 60% 一次都还没测过,这才是真正卡住的事
+- 代码里**已经存在**一组用户点名提前做的 Phase 2→3 最小切片:访客和他人化身对话、AI 裁判(契合度报告,≥70 分解锁)、解锁后的真人私信、名人化身(冷启动门面)、对外形象。它们是既成事实,维护即可,但不要在盲测过关前继续往这条线上堆功能
+- **仍然不要做**:人格卡片向量匹配引擎、Agent↔Agent 自动对话沙盒、围观模式、破冰包。这些等 Phase 0/1 门槛过了再说,哪怕顺手
 
 ## 4. 技术栈与架构约定
 
 - **客户端**:Expo (React Native),TypeScript。薄客户端原则——所有模型逻辑、蒸馏、检索走后端 API,客户端只做 UI 和状态。
 - **开发环境**:Windows 原生(不用 WSL,避免 Expo dev server 局域网问题);iPad 跑 Expo Go 真机预览;构建走 EAS Build 云端,分发走 TestFlight。
 - **后端**:FastAPI (Python)。蒸馏 pipeline、LoRA/DPO 训练、RAG 检索均为后端服务,GPU 训练任务异步化。
-- **禁止事项**:客户端不得直接调用 LLM API(密钥安全 + 逻辑收敛后端);不要引入 Redux(用 zustand);聊天 UI 优先 react-native-gifted-chat。
+- **禁止事项**:客户端不得直接调用 LLM API(密钥安全 + 逻辑收敛后端);不要引入 Redux(用 zustand)。聊天 UI 现为自绘气泡 + 输入条(`components/chat/`),够用且三端一致,不再引入 gifted-chat。
+- **客户端 UI 约定(2026-11 重做后)**:
+  - 颜色/字号/圆角/间距只从 `client/constants/theme.ts` 取(`useTheme()`),组件里不写死 rgba;iOS 系统分层(grouped background → surface → fill)+ 一套靛蓝强调色
+  - 通用件在 `client/components/ui/`(Button / Card / ListGroup+ListRow / TextField / SegmentedControl / Sheet+ActionSheet / Pill / Banner / EmptyState / Avatar / LargeHeader),新页面先复用再造
+  - **不要用 `Alert.alert` / `Alert.prompt`**:react-native-web 里前者是空实现、后者只有 iOS 有。确认/提示一律 `lib/dialog.ts`(`dialog.confirm` / `dialog.alert`),它由根布局的 `<DialogHost />` 渲染,三端一致
+  - 导航是标准底部 Tab(日记 / 对话 / 我)+ 原生栈;编辑类页面用 `presentation: 'modal'` 并在页面内用 `Stack.Screen` 配置「取消 / 保存」
+  - **不加新的原生依赖**(需要重新 EAS Build,OTA 推不出去);现有依赖已覆盖:reanimated、gesture-handler、expo-image、expo-haptics、expo-linear-gradient、expo-symbols
+  - 后端新增顶级路由时同步 `deploy/nginx-agentdiary.conf` 的正则(`/users/...` 之下的新接口不用改)
 
 ## 5. 数据与隐私红线
 
@@ -68,3 +84,7 @@
 
 - `architecture.mermaid`(仓库根目录)— 五层系统架构图(数据/蒸馏/模型/应用/评估环)
 - `mvp-roadmap.mermaid`(仓库根目录)— 四阶段规划图与门槛指标
+- `HANDOFF.md` — 交接速查:凭据位置、服务器、踩坑、待办、每次迭代的变更摘要
+- `deploy/README.md` — 部署与运维:`deploy.sh` 一键部署、`backup-db.sh` 备份、nginx 正则维护陷阱
+- `server/README.md` — 后端接口表、LLM 两档配置、测试(`pytest`)
+- Notion「AgentDiary」页 — 关键信息与迭代记录的对外同步版本(含演示账号口令,不进 git)

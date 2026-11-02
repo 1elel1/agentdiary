@@ -4,7 +4,7 @@
 
 | 项 | 值 |
 |---|---|
-| 公网地址 | `https://43.130.127.226.sslip.io`(443 待放行)/ `http://43.130.127.226` |
+| 公网地址 | `https://43.130.127.226.sslip.io`(80 全部跳转 HTTPS) |
 | 健康检查 | `/health` |
 | 证书 | Let's Encrypt,ECDSA,`certbot.timer` 自动续期(续期演练已验证) |
 | 域名 | sslip.io 免费泛解析:`<IP>.sslip.io` 直接解析到该 IP,无需注册。**服务器 IP 变了域名要跟着变,证书也要重签** |
@@ -15,9 +15,46 @@
 
 ## 本目录文件
 
+- `deploy.sh` → **一键部署**(在服务器上跑):拉代码 → 装依赖并跑测试 → 导出网页版发布 → 重启 API → 健康检查
+- `backup-db.sh` → SQLite 热备份(`.backup` 在线快照 + 头像打包,保留 14 天),配 cron 每天跑
 - `agentdiary-api.service` → 部署到 `/etc/systemd/system/`
 - `nginx-agentdiary.conf` → 部署到 `/etc/nginx/sites-available/agentdiary`,并软链到 `sites-enabled/default`
 - `agentdiary.env.example` → 复制到 `/etc/agentdiary.env` 后填入真实 `DASHSCOPE_API_KEY`
+
+## 日常发布
+
+```bash
+ssh agentdiary
+cd /home/ubuntu/agentdiary && bash deploy/deploy.sh            # 部署 main
+cd /home/ubuntu/agentdiary && bash deploy/deploy.sh <branch>   # 部署某个分支(先在分支上验证再合 main)
+SKIP_WEB=1 bash deploy/deploy.sh                               # 只更新后端
+```
+
+脚本会先跑 `pytest`,测试不过不会重启服务。网页版需要服务器有 node ≥ 20
+(`curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs`);
+没装的话脚本会跳过网页步骤,改在开发机构建后上传:
+
+```powershell
+# Windows 开发机(utils\env.bat 加载过 node 后)
+cd client
+$env:EXPO_PUBLIC_API_URL="https://43.130.127.226.sslip.io"; npx expo export --platform web
+scp -r dist/* agentdiary:/tmp/agentdiary-web/
+ssh agentdiary "sudo rsync -a --delete /tmp/agentdiary-web/ /var/www/agentdiary/"
+```
+
+本次(2026-11)前端重做没有新增原生依赖,App 端走 EAS Update(OTA)即可:
+`cd client && eas update --channel preview --message "v4.0 ui"`;`APP_VERSION`
+在 `client/constants/app.ts`,发 OTA 前 +1,真机在「我」页底部看版本号确认。
+
+## 数据库备份
+
+```bash
+sudo apt-get install -y sqlite3
+(crontab -l 2>/dev/null; echo '10 4 * * * /home/ubuntu/agentdiary/deploy/backup-db.sh') | crontab -
+ls /var/backups/agentdiary
+```
+
+备份只在本机磁盘,记得定期拷一份到别处。
 
 ## 常用命令
 
