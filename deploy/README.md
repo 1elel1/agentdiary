@@ -46,6 +46,22 @@ ssh agentdiary "sudo rsync -a --delete /tmp/agentdiary-web/ /var/www/agentdiary/
 `cd client && eas update --channel preview --message "v4.0 ui"`;`APP_VERSION`
 在 `client/constants/app.ts`,发 OTA 前 +1,真机在「我」页底部看版本号确认。
 
+## 从 GitHub Actions 部署(不用登服务器)
+
+`.github/workflows/deploy.yml`:在 GitHub 的 runner 上跑后端测试、导出网页版,再用 SSH
+把代码推进服务器仓库、上传静态站、跑 `deploy/deploy.sh`(NO_GIT=1 SKIP_WEB=1)、最后做公网
+健康检查。服务器上不需要 node,也不依赖服务器仓库的 git remote 指向哪里。
+
+**一次性准备**:仓库 Settings → Secrets and variables → Actions → New repository secret,
+名字 `DEPLOY_SSH_KEY`,值 = 本机 `~/.ssh/test.pem` 的完整内容(含 BEGIN / END 两行)。
+地址和用户名默认 `ubuntu@43.130.127.226`,要改就加仓库变量 `DEPLOY_HOST` / `DEPLOY_USER`。
+
+**触发**:Actions → Deploy to server → Run workflow → 选分支(`skip_web` 勾上只更新后端)。
+只手动触发,不绑 push:约定是分支先在服务器上验证、再合 main。
+
+注意:它会把服务器仓库的同名分支**强制指到本次提交**(GitHub 是唯一事实来源);服务器
+上有未提交改动时会中止并列出,不会覆盖。
+
 ## 数据库备份
 
 ```bash

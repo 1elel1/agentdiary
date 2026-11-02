@@ -4,6 +4,7 @@
 #   bash deploy/deploy.sh            # 部署 main
 #   bash deploy/deploy.sh my-branch  # 部署指定分支
 #   SKIP_WEB=1 bash deploy/deploy.sh # 只更新后端,不重建网页版
+#   NO_GIT=1  bash deploy/deploy.sh  # 代码已由别处放好(GitHub Actions 推送),跳过拉取
 #
 # 做五件事:拉代码 → 装 Python 依赖并跑测试 → 导出网页版并发布到 nginx 目录
 # → 重启 API → 健康检查。任何一步失败即停止,不会重启成半截状态。
@@ -22,10 +23,14 @@ log() { printf '\n\033[1;34m[deploy]\033[0m %s\n' "$*"; }
 
 cd "$REPO_DIR"
 
-log "拉取 origin/$BRANCH"
-git fetch origin "$BRANCH"
-git checkout -q "$BRANCH"
-git pull --ff-only origin "$BRANCH"
+if [ "${NO_GIT:-0}" = "1" ]; then
+  log "NO_GIT=1,使用工作区现有代码"
+else
+  log "拉取 origin/$BRANCH"
+  git fetch origin "$BRANCH"
+  git checkout -q "$BRANCH"
+  git pull --ff-only origin "$BRANCH"
+fi
 log "当前提交:$(git log -1 --format='%h %s')"
 
 log "后端依赖 + 测试"

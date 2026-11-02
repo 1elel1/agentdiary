@@ -1,0 +1,121 @@
+name: Deploy to server
+
+# 从 GitHub Actions 部署到腾讯云服务器(43.130.127.226)。
+#
+# 流程:runner 上跑后端测试、导出网页版 → SSH 把代码推进服务器的仓库并切到该提交
+# → 上传静态站 → 运行 deploy/deploy.sh(装依赖、再跑一遍测试、重启 API)→ 公网健康检查。
+#
+# 只需要一个仓库 secret:
+#   DEPLOY_SSH_KEY = 本机 ~/.ssh/test.pem 的完整内容(含 BEGIN/END 两行)
+#   GitHub → Settings → Secrets and variables → Actions → New repository secret
+# 服务器地址 / 用户名有默认值,也可用仓库变量 DEPLOY_HOST / DEPLOY_USER 覆盖。
+#
+# 只手动触发(Actions → Deploy to server → Run workflow,选分支):HANDOFF 的约定是
+# 分支先在服务器上验证、再合 main,所以不绑 push 自动部署。
+#
+# 对服务器的要求:ubuntu 用户可免密 sudo(Lighthouse 默认如此);仓库在 /home/ubuntu/agentdiary。
+# 部署会把服务器仓库的同名分支强制指到本次提交(GitHub 是唯一事实来源),
+# 服务器上有未提交改动时会中止并列出,不会覆盖。
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_web:
+        description: 只更新后端,不重建网页版
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+env:
+  DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '43.130.127.226' }}
+  DEPLOY_USER: ${{ vars.DEPLOY_USER || 'ubuntu' }}
+  REPO_DIR: /home/ubuntu/agentdiary
+  WEB_DIR: /var/www/agentdiary
+  PUBLIC_URL: https://43.130.127.226.sslip.io
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检查 secret
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          if [ -z "$DEPLOY_SSH_KEY" ]; then
+            echo "::error::缺少仓库 secret DEPLOY_SSH_KEY(本机 ~/.ssh/test.pem 的内容)。GitHub → Settings → Secrets and variables → Actions 添加后重跑。"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 后端测试
+        run: |
+          python -m pip install -q -r server/requirements.txt pytest
+          cd server && AGENTDIARY_DATA_DIR="$(mktemp -d)" python -m pytest -q
+
+      - uses: actions/setup-node@v4
+        if: ${{ !inputs.skip_web }}
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: 导出网页版
+        if: ${{ !inputs.skip_web }}
+        working-directory: client
+        env:
+          EXPO_PUBLIC_API_URL: ${{ env.PUBLIC_URL }}
+        run: |
+          npm ci --no-audit --no-fund
+          npx expo export --platform web
+          du -sh dist
+
+      - name: 准备 SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          {
+            echo "Host server"
+            echo "  HostName $DEPLOY_HOST"
+            echo "  User $DEPLOY_USER"
+            echo "  IdentityFile ~/.ssh/deploy_key"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+          } > ~/.ssh/config
+          ssh server 'echo "ssh ok: $(hostname)"; command -v rsync >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq rsync)'
+
+      - name: 把代码推到服务器仓库
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          ssh server "cd ${REPO_DIR} && if ! git diff --quiet || ! git diff --cached --quiet; then echo '::error::服务器仓库有未提交的改动,先在服务器上处理掉再部署:'; git status --short; exit 1; fi"
+          git push --force "server:${REPO_DIR}" "HEAD:refs/remotes/ci/${BRANCH}"
+          ssh server "cd ${REPO_DIR} && git checkout -q -B '${BRANCH}' 'ci/${BRANCH}' && echo \"服务器现在在:\$(git log -1 --format='%h %s')\""
+
+      - name: 上传网页版
+        if: ${{ !inputs.skip_web }}
+        run: |
+          rsync -az --delete client/dist/ "server:/tmp/agentdiary-web/"
+          ssh server "sudo mkdir -p ${WEB_DIR} && sudo rsync -a --delete /tmp/agentdiary-web/ ${WEB_DIR}/ && rm -rf /tmp/agentdiary-web"
+
+      - name: 服务器端部署(依赖、测试、重启)
+        run: |
+          ssh server "cd ${REPO_DIR} && NO_GIT=1 SKIP_WEB=1 bash deploy/deploy.sh"
+
+      - name: 公网健康检查
+        run: |
+          curl -fsS "${PUBLIC_URL}/health"; echo
+          curl -fsS -o /dev/null -w 'web /login → HTTP %{http_code}\n' "${PUBLIC_URL}/login"

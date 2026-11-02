@@ -100,14 +100,26 @@ sudo journalctl -u agentdiary-api -n 100 --no-pager
 ### 1. 把 v4.0 部署到服务器并真机过一遍
 
 本次迭代在云端 session 里做,**那台 session 连不上服务器**(出网策略没放行
-`43.130.127.226`),所以代码已推到分支但还没部署。步骤:
+`43.130.127.226`,22 端口也不通),所以代码已推到分支但还没部署。两条路任选:
+
+**A. GitHub Actions(推荐,之后每次部署都能在 GitHub 上一键跑,云端 session 也能触发)**
+1. 仓库 Settings → Secrets and variables → Actions → New repository secret:
+   名字 `DEPLOY_SSH_KEY`,值 = 本机 `~/.ssh/test.pem` 全文(只需做这一次)
+2. Actions → Deploy to server → Run workflow → 选 `claude/brave-volta-zbr8b5`
+3. 绿了就去 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象
+
+**B. 登服务器手动跑**
 
 ```bash
 ssh agentdiary
 cd /home/ubuntu/agentdiary && bash deploy/deploy.sh claude/brave-volta-zbr8b5   # 先在分支上验
-# 浏览器打开 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象
-# 没问题再合进 main:git checkout main && git merge --ff-only claude/brave-volta-zbr8b5 && git push
-cd client && eas update --channel preview --message "v4.0 ui + persona"            # App 端 OTA
+```
+
+验完合进 main 并发 App 端 OTA:
+
+```bash
+git checkout main && git merge --ff-only claude/brave-volta-zbr8b5 && git push
+cd client && eas update --channel preview --message "v4.0 ui + persona"
 ```
 
 真机重点看:底部 Tab 在刘海屏的安全区、聊天页键盘弹起时输入条位置(Android 带
@@ -171,7 +183,8 @@ App 失联**,修复要重新过审)、隐私政策 URL、App 隐私标签(需声
 
 ## 相关文件
 
-- `deploy/README.md` — 一键部署脚本、备份、nginx 正则的维护陷阱、云防火墙排查
+- `deploy/README.md` — 一键部署脚本、GitHub Actions 部署、备份、nginx 正则的维护陷阱、云防火墙排查
+- `.github/workflows/deploy.yml` — Actions 部署工作流(手动触发;需要 secret `DEPLOY_SSH_KEY`)
 - `server/README.md` — 接口表、化身 prompt 的三路输入、LLM 两档配置、测试
 - `CLAUDE.md` — 产品定位、技术方案、阶段门槛、隐私红线、客户端 UI 约定
 
