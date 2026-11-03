@@ -25,7 +25,7 @@ class FakeLLM:
         self.reply = "嗯,差不多就是这样。"
         self.fail = False
         # 下一次蒸馏要抽出的卡片;用例按需改它(替换方法本身不生效,fixture 已绑定)
-        self.cards = [{"assertion": "TA 最近在为考试焦虑", "confidence": 0.8}]
+        self.cards = [{"assertion": "TA 最近在为考试焦虑", "kind": "mood", "confidence": 0.8}]
         # 标签提炼的返回
         self.tags = ["考试", "焦虑"]
 

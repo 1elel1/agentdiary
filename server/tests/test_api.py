@@ -170,3 +170,66 @@ def test_recommend_reason_follows_language():
     # 认不出来的语言回落简体中文
     _, unknown = score_candidate(me_tags, u, [], 3, None, now, lang="xx")
     assert unknown == "TA 写了自我介绍"
+
+
+def test_diary_defaults_private_and_training_gate(client, fake_llm):
+    me = register(client, _name("g"))
+    h = auth(me["token"])
+    # 默认私密
+    d = client.post("/diaries", json={"content": "今天很累,但把该做的做完了。"}, headers=h).json()
+    assert d["visibility"] == "private"
+    assert d["use_for_twin"] is True
+    cards = client.get("/persona-cards", headers=h).json()
+    assert len(cards) == 1 and cards[0]["kind"] == "mood"
+
+    # 「只保存,不用于化身」:不蒸馏
+    fake_llm.cards = [{"assertion": "TA 关注某条法规", "kind": "stable", "confidence": 0.9}]
+    pasted = client.post(
+        "/diaries", json={"content": "第一条 为了规范…… 第二条 本办法适用于……", "use_for_twin": False}, headers=h
+    ).json()
+    assert pasted["use_for_twin"] is False
+    assert len(client.get("/persona-cards", headers=h).json()) == 1
+    listed = {x["id"]: x for x in client.get("/diaries", headers=h).json()}
+    assert listed[d["id"]]["card_count"] == 1
+    assert listed[pasted["id"]]["card_count"] == 0
+
+    # 事后打开闸门 → 蒸馏;再关掉 → 衍生物清空
+    on = client.patch(f"/diaries/{pasted['id']}", json={"use_for_twin": True}, headers=h).json()
+    assert on["use_for_twin"] is True
+    assert len(client.get("/persona-cards", headers=h).json()) == 2
+    off = client.patch(f"/diaries/{pasted['id']}", json={"use_for_twin": False}, headers=h).json()
+    assert off["use_for_twin"] is False and off["card_count"] == 0
+    assert len(client.get("/persona-cards", headers=h).json()) == 1
+
+
+def test_guess_cards_shown_but_not_injected(client, fake_llm):
+    me = register(client, _name("k"))
+    h = auth(me["token"])
+    fake_llm.cards = [
+        {"assertion": "TA 喜欢一个人看电影", "kind": "stable", "confidence": 0.9},
+        {"assertion": "TA 可能对新工作不太满意", "kind": "guess", "confidence": 0.3},
+    ]
+    client.post("/diaries", json={"content": "又一个人去看了电影。新工作说不上来。"}, headers=h)
+    cards = client.get("/persona-cards", headers=h).json()
+    assert {c["kind"] for c in cards} == {"stable", "guess"}
+    fake_llm.calls.clear()
+    client.post("/chat", json={"message": "你好"}, headers=h)
+    system = fake_llm.calls[-1]["system"]
+    assert "TA 喜欢一个人看电影" in system
+    assert "TA 可能对新工作不太满意" not in system
+
+
+def test_exclude_persona_card(client, fake_llm):
+    me = register(client, _name("x"))
+    h = auth(me["token"])
+    client.post("/diaries", json={"content": "考试前总是睡不好。"}, headers=h)
+    cards = client.get("/persona-cards", headers=h).json()
+    assert len(cards) == 1
+    r = client.delete(f"/persona-cards/{cards[0]['id']}", headers=h)
+    assert r.status_code == 200
+    assert client.get("/persona-cards", headers=h).json() == []
+    # 别人的卡片删不掉(也不暴露存在性)
+    other = register(client, _name("y"))
+    client.post("/diaries", json={"content": "今天跑了五公里。"}, headers=auth(other["token"]))
+    theirs = client.get("/persona-cards", headers=auth(other["token"])).json()[0]
+    assert client.delete(f"/persona-cards/{theirs['id']}", headers=h).status_code == 404

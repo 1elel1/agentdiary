@@ -70,11 +70,14 @@ function DiaryCard({
   unlocked,
   onPress,
   onLongPress,
+  onMore,
 }: {
   row: ItemRow;
   unlocked: boolean;
   onPress: () => void;
   onLongPress: () => void;
+  // 显式的「更多」按钮:长按不可发现,也不是无障碍可达的操作
+  onMore: () => void;
 }) {
   const { colors } = useTheme();
   const t = useT();
@@ -94,8 +97,13 @@ function DiaryCard({
           {row.kind === 'pending' ? (
             <Pill label={t.diary.pending} tone="warning" icon="icloud.slash.fill" />
           ) : (
-            <Pill label={t.visibility[visibility]} tone={VISIBILITY_TONE[visibility]} />
+            <>
+              {/* 仅自己是默认,不标;只标出扩大了可见范围的 */}
+              {visibility !== 'private' && <Pill label={t.visibility[visibility]} tone={VISIBILITY_TONE[visibility]} />}
+              {!row.item.use_for_twin && <Pill label={t.diary.notForTwin} tone="neutral" icon="brain.head.profile" />}
+            </>
           )}
+          <IconButton name="ellipsis" size={16} tone="plain" accessibilityLabel={t.diary.more} onPress={onMore} style={styles.moreButton} />
         </View>
       </View>
       {hideContent ? (
@@ -124,12 +132,23 @@ function DiaryList() {
   const insets = useSafeAreaInsets();
   const { colors, scheme } = useTheme();
   const t = useT();
-  const { entries, pending, loading, error, refresh, remove, setVisibility, setLocked } =
-    useDiaryStore();
+  const {
+    entries,
+    pending,
+    loading,
+    error,
+    refresh,
+    remove,
+    setVisibility,
+    setLocked,
+    setUseForTwin,
+    lastSaved,
+    clearLastSaved,
+  } = useDiaryStore();
   const diaryBg = useSettingsStore((s) => s.diaryBg);
   const lockPattern = useSettingsStore((s) => s.lockPattern);
   const userId = useAuthStore((s) => s.userId);
-  const { status, cardCount, refresh: refreshProfile } = useProfileStore();
+  const { status, inUseCount, refresh: refreshProfile } = useProfileStore();
 
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -143,6 +162,21 @@ function DiaryList() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 刚保存的横幅只停留几秒:确认「存成了什么样」,不长期占位
+  useEffect(() => {
+    if (!lastSaved) return;
+    const timer = setTimeout(clearLastSaved, 4500);
+    return () => clearTimeout(timer);
+  }, [lastSaved, clearLastSaved]);
+  const savedMessage =
+    lastSaved && !lastSaved.offline
+      ? !lastSaved.useForTwin
+        ? t.diary.savedNoTwin
+        : lastSaved.visibility === 'private'
+          ? t.diary.savedPrivate
+          : t.diary.savedShared
+      : null;
 
   useFocusEffect(
     useCallback(() => {
@@ -186,7 +220,13 @@ function DiaryList() {
   const confirmDelete = async (row: ItemRow) => {
     const ok = await dialog.confirm({
       title: row.kind === 'pending' ? t.diary.deletePendingTitle : t.diary.deleteTitle,
-      message: row.kind === 'pending' ? t.diary.deletePendingMessage : t.diary.deleteMessage,
+      // 删除前说清楚会一并删掉几条学到的理解
+      message:
+        row.kind === 'pending'
+          ? t.diary.deletePendingMessage
+          : row.item.card_count > 0
+            ? t.diary.deleteMessageWithCards(row.item.card_count)
+            : t.diary.deleteMessage,
       confirmText: t.common.delete,
       destructive: true,
     });
@@ -248,6 +288,27 @@ function DiaryList() {
     setVisibility(row.id, visibility).catch(() => dialog.alert(t.diary.changeFailed, t.common.tryLater));
   };
 
+  // 训练闸门:关 = 化身立刻忘掉这篇(衍生物清空);开 = 重新学习
+  const toggleTwin = async (row: ItemRow) => {
+    if (row.kind !== 'entry') return;
+    if (row.item.use_for_twin) {
+      const ok = await dialog.confirm({
+        title: t.diary.stopForTwinTitle,
+        message: t.diary.stopForTwinMessage,
+        confirmText: t.diary.stopForTwin,
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      await setUseForTwin(row.id, !row.item.use_for_twin);
+      haptic.success();
+      if (!row.item.use_for_twin) dialog.alert(t.diary.relearnedTitle, t.diary.relearnedMessage);
+    } catch (e) {
+      dialog.alert(t.common.actionFailed, e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const redistill = async (row: ItemRow) => {
     if (row.kind !== 'entry') return;
     try {
@@ -261,14 +322,8 @@ function DiaryList() {
   const openDetail = (row: ItemRow) => {
     if (row.kind !== 'entry') return;
     const go = () => {
-      router.push({
-        pathname: '/diary-editor',
-        params: {
-          diaryId: row.id,
-          initialContent: row.item.content,
-          createdAt: row.item.created_at,
-        },
-      });
+      // 只传 id,正文由编辑器从本地缓存取(不进 URL)
+      router.push({ pathname: '/diary-editor', params: { diaryId: row.id } });
     };
     // 点按加锁日记:验证通过直接进详情页,锁状态保持不变
     if (row.item.locked && lockPattern) {
@@ -280,7 +335,7 @@ function DiaryList() {
   };
 
   const count = items.length;
-  const subtitle = count === 0 ? t.diary.firstHint : t.diary.summary(count, cardCount);
+  const subtitle = count === 0 ? t.diary.firstHint : t.diary.summary(count, inUseCount);
 
   return (
     <ScreenBackground setting={diaryBg}>
@@ -348,6 +403,7 @@ function DiaryList() {
                 )}
               </View>
 
+              {savedMessage && <Banner tone="success" message={savedMessage} style={styles.banner} />}
               {error && <Banner tone="warning" message={error} style={styles.banner} />}
             </View>
           }
@@ -374,6 +430,7 @@ function DiaryList() {
                 unlocked={item.kind === 'entry' && unlockedDiaryIds.has(item.id)}
                 onPress={() => openDetail(item)}
                 onLongPress={() => setActionRow(item)}
+                onMore={() => setActionRow(item)}
               />
             )
           }
@@ -424,11 +481,20 @@ function DiaryList() {
                     icon: actionRow.item.locked ? 'lock.open.fill' : 'lock.fill',
                     onPress: () => toggleLock(actionRow),
                   },
-                  {
-                    label: t.diary.relearn,
-                    icon: 'arrow.triangle.2.circlepath',
-                    onPress: () => redistill(actionRow),
-                  },
+                  actionRow.item.use_for_twin
+                    ? {
+                        label: t.diary.relearn,
+                        icon: 'arrow.triangle.2.circlepath',
+                        onPress: () => redistill(actionRow),
+                      }
+                    : {
+                        label: t.diary.useForTwin,
+                        icon: 'sparkles',
+                        onPress: () => toggleTwin(actionRow),
+                      },
+                  ...(actionRow.item.use_for_twin
+                    ? [{ label: t.diary.stopForTwin, icon: 'brain.head.profile' as const, onPress: () => toggleTwin(actionRow) }]
+                    : []),
                   { label: t.diary.deleteThis, icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) },
                 ]
               : actionRow
@@ -497,6 +563,7 @@ const styles = StyleSheet.create({
   entryCard: { marginHorizontal: 20, marginBottom: 10 },
   entryTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   entryTopRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  moreButton: { marginVertical: -8, marginRight: -8 },
   entryContent: { lineHeight: 23 },
   lockedBody: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10 },
   entryFooter: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 10 },

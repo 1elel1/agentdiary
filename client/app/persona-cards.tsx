@@ -1,45 +1,69 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Banner } from '@/components/ui/banner';
+import { IconButton } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { SectionLabel } from '@/components/ui/large-header';
 import { Pill } from '@/components/ui/pill';
-import { Type } from '@/constants/theme';
+import { ActionSheet } from '@/components/ui/sheet';
+import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
-import { formatDateTime, parseUtc } from '@/lib/format';
-import { useT } from '@/lib/i18n';
-import type { DiaryEntry, PersonaCard } from '@/lib/types';
+import { dialog } from '@/lib/dialog';
+import { dateKey, formatDateTime, parseUtc } from '@/lib/format';
+import { haptic } from '@/lib/haptics';
+import { useT, type Dict } from '@/lib/i18n';
+import type { DiaryEntry, PersonaCard, PersonaCardKind } from '@/lib/types';
+import { useProfileStore } from '@/stores/profile-store';
 
-interface Group {
-  diaryId: string;
-  diary: DiaryEntry | null;
-  cards: PersonaCard[];
-  createdAt: string;
+// 分组按「性质」而不是按来源日记:用户要看的是「它怎么理解我」,而不是数据从哪条记录来
+type GroupKey = PersonaCardKind | 'legacy';
+const GROUP_ORDER: GroupKey[] = ['stable', 'mood', 'guess', 'legacy'];
+
+function groupTitle(t: Dict, g: GroupKey): string {
+  return g === 'stable' ? t.cards.groupStable : g === 'mood' ? t.cards.groupMood : g === 'guess' ? t.cards.groupGuess : t.cards.groupLegacy;
 }
 
-function confidenceTone(c: number): 'success' | 'tint' | 'warning' {
-  if (c >= 0.8) return 'success';
-  if (c >= 0.5) return 'tint';
-  return 'warning';
+function groupHint(t: Dict, g: GroupKey): string {
+  return g === 'stable'
+    ? t.cards.groupStableHint
+    : g === 'mood'
+      ? t.cards.groupMoodHint
+      : g === 'guess'
+        ? t.cards.groupGuessHint
+        : t.cards.groupLegacyHint;
 }
 
-/** 人格卡片:化身从日记里学到的「你」。每张都能对回到来源日记(可追溯、可删除)。 */
+function kindPill(t: Dict, kind: PersonaCardKind): { label: string; tone: 'tint' | 'info' | 'warning' } {
+  if (kind === 'mood') return { label: t.cards.kindMood, tone: 'info' };
+  if (kind === 'guess') return { label: t.cards.kindGuess, tone: 'warning' };
+  return { label: t.cards.kindStable, tone: 'tint' };
+}
+
+/** 化身学到的「你」:按性质分组、可追溯到来源、可排除。不是养成进度条。 */
 export default function PersonaCardsScreen() {
   const { colors } = useTheme();
   const t = useT();
-  const [cards, setCards] = useState<PersonaCard[]>([]);
+  const cards = useProfileStore((s) => s.cards);
+  const inUseCount = useProfileStore((s) => s.inUseCount);
+  const pendingCount = useProfileStore((s) => s.pendingCount);
+  const refreshProfile = useProfileStore((s) => s.refresh);
+  const excludeCard = useProfileStore((s) => s.excludeCard);
+
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 来源默认收起:首层只看结论,「查看来源」才展开原日记(仍在本人的私密空间里)
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [actionCard, setActionCard] = useState<PersonaCard | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, d] = await Promise.all([api.listPersonaCards(), api.listDiaries()]);
-      setCards(c);
+      const [, d] = await Promise.all([refreshProfile(null), api.listDiaries()]);
       setDiaries(d);
       setError(null);
     } catch (e) {
@@ -48,103 +72,135 @@ export default function PersonaCardsScreen() {
       setLoading(false);
       setLoaded(true);
     }
-  }, []);
+  }, [refreshProfile]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  const groups = useMemo<Group[]>(() => {
-    const byDiary = new Map(diaries.map((d) => [d.id, d]));
-    const map = new Map<string, Group>();
-    for (const card of cards) {
-      const g = map.get(card.source_diary_id) ?? {
-        diaryId: card.source_diary_id,
-        diary: byDiary.get(card.source_diary_id) ?? null,
-        cards: [],
-        createdAt: byDiary.get(card.source_diary_id)?.created_at ?? card.created_at,
-      };
-      g.cards.push(card);
-      map.set(card.source_diary_id, g);
-    }
-    return [...map.values()].sort(
-      (a, b) => parseUtc(b.createdAt).getTime() - parseUtc(a.createdAt).getTime(),
-    );
-  }, [cards, diaries]);
+  const active = useMemo(() => cards.filter((c) => !c.superseded_by), [cards]);
+  const diaryById = useMemo(() => new Map(diaries.map((d) => [d.id, d])), [diaries]);
+  const groups = useMemo(
+    () =>
+      GROUP_ORDER.map((key) => ({
+        key,
+        items: active
+          .filter((c) => (c.kind ?? 'legacy') === key)
+          .sort((a, b) => parseUtc(b.created_at).getTime() - parseUtc(a.created_at).getTime()),
+      })).filter((g) => g.items.length > 0),
+    [active],
+  );
+  const diaryCount = useMemo(() => new Set(active.map((c) => c.source_diary_id)).size, [active]);
 
-  const active = cards.filter((c) => !c.superseded_by).length;
+  const toggleSource = (id: string) => {
+    haptic.selection();
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const exclude = async (card: PersonaCard) => {
+    const ok = await dialog.confirm({
+      title: t.cards.excludeTitle,
+      message: t.cards.excludeMessage,
+      confirmText: t.cards.exclude,
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await excludeCard(card.id);
+      haptic.success();
+    } catch (e) {
+      dialog.alert(t.cards.excludeFailed, e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
     <View style={styles.container}>
-      <FlatList
-        data={groups}
-        keyExtractor={(g) => g.diaryId}
+      <ScrollView
+        contentContainerStyle={[styles.list, active.length === 0 && styles.listGrow]}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.textSecondary} />}
-        contentContainerStyle={[styles.list, groups.length === 0 && styles.listGrow]}
-        ListHeaderComponent={
-          <View style={styles.header}>
-            {error && <Banner tone="danger" message={error} actionLabel={t.common.retry} onAction={refresh} />}
-            {groups.length > 0 && (
-              <Text style={[Type.footnote, { color: colors.textSecondary }]}>
-                {t.cards.summary(active, groups.length)}
-              </Text>
-            )}
+        showsVerticalScrollIndicator={false}>
+        {error && <Banner tone="danger" message={error} actionLabel={t.common.retry} onAction={refresh} />}
+
+        {active.length > 0 && (
+          <View style={styles.summary}>
+            <Text style={[Type.title3, { color: colors.text }]}>{t.cards.status(inUseCount, pendingCount)}</Text>
+            <Text style={[Type.footnote, styles.summaryHint, { color: colors.textSecondary }]}>
+              {t.cards.summary(diaryCount)}
+            </Text>
           </View>
-        }
-        ListEmptyComponent={
-          loaded && !loading ? (
-            <EmptyState
-              icon="brain.head.profile"
-              title={t.cards.emptyTitle}
-              message={t.cards.emptyMessage}
-            />
-          ) : null
-        }
-        renderItem={({ item }) => (
-          <Card padded={false} style={styles.group}>
-            <View style={[styles.groupHeader, { borderBottomColor: colors.separator }]}>
-              <Text style={[Type.caption1, { color: colors.textTertiary }]}>
-                {t.cards.source(formatDateTime(item.createdAt))}
-              </Text>
-              <Text style={[Type.footnote, { color: colors.textSecondary }]} numberOfLines={2}>
-                {item.diary ? item.diary.content : t.cards.diaryGone}
-              </Text>
-            </View>
-            {item.cards.map((card, i) => (
-              <View
-                key={card.id}
-                style={[
-                  styles.cardRow,
-                  i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
-                  card.superseded_by && styles.superseded,
-                ]}>
-                <Text style={[Type.callout, styles.assertion, { color: colors.text }]}>{card.assertion}</Text>
-                <View style={styles.meta}>
-                  <View style={[styles.track, { backgroundColor: colors.fill }]}>
-                    <View
-                      style={[
-                        styles.fillBar,
-                        {
-                          width: `${Math.round(card.confidence * 100)}%`,
-                          backgroundColor:
-                            confidenceTone(card.confidence) === 'success'
-                              ? colors.success
-                              : confidenceTone(card.confidence) === 'tint'
-                                ? colors.tint
-                                : colors.warning,
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={[Type.caption1, { color: colors.textTertiary }]}>
-                    {t.cards.confidence(card.confidence.toFixed(1))}
-                  </Text>
-                  {card.superseded_by && <Pill label={t.cards.superseded} tone="neutral" />}
-                </View>
-              </View>
-            ))}
-          </Card>
         )}
+
+        {loaded && !loading && active.length === 0 && (
+          <EmptyState icon="brain.head.profile" title={t.cards.emptyTitle} message={t.cards.emptyMessage} />
+        )}
+
+        {groups.map((g) => (
+          <View key={g.key} style={styles.group}>
+            <SectionLabel style={styles.groupLabel}>{groupTitle(t, g.key)}</SectionLabel>
+            <Text style={[Type.caption1, styles.groupHint, { color: colors.textTertiary }]}>{groupHint(t, g.key)}</Text>
+            <Card padded={false}>
+              {g.items.map((card, i) => {
+                const diary = diaryById.get(card.source_diary_id);
+                const open = expanded.has(card.id);
+                const pill = card.kind ? kindPill(t, card.kind) : null;
+                return (
+                  <View
+                    key={card.id}
+                    style={[styles.cardRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator }]}>
+                    <View style={styles.cardTop}>
+                      <Text style={[Type.callout, styles.assertion, { color: colors.text }]}>{card.assertion}</Text>
+                      <IconButton
+                        name="ellipsis"
+                        size={16}
+                        tone="plain"
+                        accessibilityLabel={t.cards.cardMore}
+                        onPress={() => setActionCard(card)}
+                        style={styles.more}
+                      />
+                    </View>
+                    <View style={styles.meta}>
+                      {pill && <Pill label={pill.label} tone={pill.tone} />}
+                      <Text style={[Type.caption1, styles.metaText, { color: colors.textTertiary }]} numberOfLines={1}>
+                        {t.cards.learnedAt(dateKey(parseUtc(card.created_at)))}
+                      </Text>
+                      <Pressable onPress={() => toggleSource(card.id)} hitSlop={8} accessibilityRole="button">
+                        <Text style={[Type.caption1, { color: colors.tint, fontWeight: '600' }]}>
+                          {open ? t.cards.hideSource : t.cards.viewSource}
+                        </Text>
+                      </Pressable>
+                    </View>
+                    {open && (
+                      <View style={[styles.source, { backgroundColor: colors.fill }]}>
+                        <Text style={[Type.caption1, { color: colors.textTertiary }]}>
+                          {t.cards.source(formatDateTime(diary?.created_at ?? card.created_at))}
+                        </Text>
+                        <Text style={[Type.footnote, styles.sourceText, { color: colors.textSecondary }]} numberOfLines={5}>
+                          {diary ? diary.content : t.cards.diaryGone}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </Card>
+          </View>
+        ))}
+      </ScrollView>
+
+      <ActionSheet
+        visible={actionCard !== null}
+        onClose={() => setActionCard(null)}
+        message={actionCard?.assertion}
+        actions={
+          actionCard
+            ? [{ label: t.cards.exclude, icon: 'minus.circle.fill', destructive: true, onPress: () => exclude(actionCard) }]
+            : []
+        }
       />
     </View>
   );
@@ -152,15 +208,19 @@ export default function PersonaCardsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  list: { padding: 20, gap: 14 },
+  list: { padding: 20, paddingBottom: 40, gap: 6 },
   listGrow: { flexGrow: 1, justifyContent: 'center' },
-  header: { gap: 10 },
-  group: {},
-  groupHeader: { paddingHorizontal: 16, paddingVertical: 12, gap: 4, borderBottomWidth: StyleSheet.hairlineWidth },
+  summary: { gap: 4, marginBottom: 14, paddingHorizontal: 2 },
+  summaryHint: { lineHeight: 18 },
+  group: { marginBottom: 18 },
+  groupLabel: { marginHorizontal: 2, marginTop: 0, marginBottom: 2 },
+  groupHint: { marginHorizontal: 2, marginBottom: 8, lineHeight: 16 },
   cardRow: { paddingHorizontal: 16, paddingVertical: 12, gap: 8 },
-  superseded: { opacity: 0.5 },
-  assertion: { lineHeight: 22 },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  assertion: { flex: 1, lineHeight: 22 },
+  more: { marginTop: -10, marginRight: -10 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  track: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', maxWidth: 140 },
-  fillBar: { height: 4, borderRadius: 2 },
+  metaText: { flex: 1 },
+  source: { borderRadius: Radius.md, padding: 10, gap: 4 },
+  sourceText: { lineHeight: 18 },
 });

@@ -65,7 +65,8 @@ _SELF_SYSTEM_TMPL = """你是用户「{owner}」的数字化身——不是 AI �
 - 回应的长度和密度贴近范例;禁止照抄或复述范例原文
 - 不要在结尾加总结句、升华句或点题(「这种感觉挺好的」这类一律不要)
 - 一次只说一件事。不要把卡片里的多个点在一条消息里说完
-- 观点与偏好必须与人格卡片一致;卡片没覆盖的话题,坦率说不确定
+- 不要长篇自我介绍:被问「你是怎样的人」也只挑一点说,留给对方追问
+- 观点与偏好必须与人格卡片一致;标了「近期状态」的卡片说的是当下,不是长期性格;卡片没覆盖的话题,坦率说不确定
 - 严禁虚构:不要编造卡片和范例里不存在的人名、事件、细节
 - 严禁 AI 客服腔:不要过度热情,不要列清单,不要文学化排比
 - 用{lang}回应"""
@@ -152,6 +153,8 @@ def _retrieve_cards(session: Session, owner: User, visitor: User) -> list[Person
         select(PersonaCard)
         .where(PersonaCard.user_id == owner.id)
         .where(PersonaCard.superseded_by == None)  # noqa: E711
+        # 推测类(guess)只展示给本人确认,不进 prompt;v4.3 之前的旧卡片 kind 为空,照常注入
+        .where(or_(PersonaCard.kind == None, PersonaCard.kind != "guess"))  # noqa: E711
     )
     if visitor.id != owner.id:
         # 隐私红线:访客只能用到 public 日记、或 restricted 且对其开放的日记衍生的卡片
@@ -233,7 +236,9 @@ def _build_system(
             )
         return _COLD_START_VISITOR.format(owner=owner.username, lang=lang)
 
-    cards_text = "\n".join(f"- {c.assertion}(置信度 {c.confidence:.1f})" for c in cards)
+    cards_text = "\n".join(
+        f"- {c.assertion}({'近期状态,' if c.kind == 'mood' else ''}置信度 {c.confidence:.1f})" for c in cards
+    )
     if is_self:
         examples = _retrieve_style_examples(session, owner.id)
         examples_text = (

@@ -7,6 +7,10 @@ export interface DiaryEntry {
   content: string;
   visibility: DiaryVisibility;
   locked: boolean; // 手势锁标记(图案仅存客户端本机)
+  // 训练闸门:false = 只保存,不用于化身(不蒸馏、衍生物已清空)
+  use_for_twin: boolean;
+  // 从这篇学到的有效理解数(删除确认时告诉用户会一并删掉几条)
+  card_count: number;
   created_at: string; // ISO 8601
   updated_at: string;
 }
@@ -112,10 +116,15 @@ export interface ConversationItem {
   last_at: string | null;
 }
 
+// 断言性质:stable=稳定的观点/偏好/性格;mood=当下感受、近期状态;guess=证据不足的推测(不进化身 prompt);
+// null = v4.3 之前抽取的旧卡片(未分类,照常使用)
+export type PersonaCardKind = 'stable' | 'mood' | 'guess';
+
 export interface PersonaCard {
   id: string;
   assertion: string;
   confidence: number; // 0~1
+  kind: PersonaCardKind | null;
   source_diary_id: string;
   superseded_by: string | null;
   created_at: string;

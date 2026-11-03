@@ -10,8 +10,9 @@ export const CELEBRITY_PORTRAITS: Record<string, ImageSourcePropType> = {
   张爱玲: require('@/assets/images/celebrities/zhangailing.jpg'),
 };
 
-// 普通用户的首字母头像底色(按用户名哈希取色,同一用户永远同色)
-const AVATAR_COLORS = ['#6b9bd1', '#d1936b', '#7fb586', '#9b8ac4', '#d17f9b', '#5fb3b3'];
+// 普通用户的首字母头像底色(按用户名哈希取色,同一用户永远同色)。
+// 低饱和中间调:深色界面上不会像警报色,白色首字母在上面也有足够对比
+const AVATAR_COLORS = ['#6F86AD', '#A8866F', '#729A7E', '#8E82B3', '#A8778F', '#64969B'];
 
 export function avatarColor(username: string): string {
   let hash = 0;

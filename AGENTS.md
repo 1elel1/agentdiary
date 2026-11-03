@@ -58,6 +58,7 @@
 - 代码里**已经存在**一组用户点名提前做的 Phase 2→3 最小切片:访客和他人化身对话、AI 裁判(契合度报告,≥70 分解锁)、解锁后的真人私信、名人化身(冷启动门面)、对外形象。它们是既成事实,维护即可,但不要在盲测过关前继续往这条线上堆功能
 - 发现页(2026-11 v4.1):不罗列全站用户;搜用户名、或按「兴趣标签重合 + 活跃度」推荐并给出可验证的理由。标签由 LLM 从卡片和对外形象提炼(`server/app/recommend.py`),是可解释的轻量排序,**不是**向量匹配引擎
 - 冷启动:`server/seed/` 有 100 个人工撰写的种子用户(`is_seed`),可登录、可聊,但不开放裁判与真人私信;是否向访客标注「测试账号」是产品决定,代码里预留了标记
+- 信任主线(2026-11 v4.3,采纳外部评审的 P0):日记**默认仅自己**;像粘贴/转载的长文保存前让用户选「仅保存,不用于化身」(`DiaryEntry.use_for_twin`,关掉即清空衍生物);卡片带 `kind`(stable / mood / guess),推测类不注入化身 prompt,用户可逐条排除;日记正文绝不放进路由参数。盲测流程见 `docs/blind-test-protocol.md`
 - **仍然不要做**:人格卡片向量匹配引擎、Agent↔Agent 自动对话沙盒、围观模式、破冰包。这些等 Phase 0/1 门槛过了再说,哪怕顺手
 
 ## 4. 技术栈与架构约定
@@ -72,6 +73,7 @@
   - **不要用 `Alert.alert` / `Alert.prompt`**:react-native-web 里前者是空实现、后者只有 iOS 有。确认/提示一律 `lib/dialog.ts`(`dialog.confirm` / `dialog.alert`),它由根布局的 `<DialogHost />` 渲染,三端一致
   - **文案一律走字典**:`client/lib/i18n/`(`zh-Hans.ts` 是主字典,繁中 / 英 / 日 / 韩由 `Dict` 类型约束,少键编译不过)。组件里 `const t = useT()`,非组件代码 `getDict()`;不要在组件里写死中文,新文案先加进五个字典。界面语言在「我 → 偏好 → 语言」(默认跟随系统,存本机);后端靠请求头 `X-Language` 决定化身回复语言与推荐理由文案
   - 导航是标准底部 Tab(日记 / 对话 / 我)+ 原生栈;编辑类页面用 `presentation: 'modal'` 并在页面内用 `Stack.Screen` 配置「取消 / 保存」
+  - 关键操作要有可发现、可无障碍操作的按钮(日记卡片的「…」、卡片的「…」),长按只是快捷方式;敏感内容(日记正文)只传 id,从本地缓存取,不进 URL;动效尊重系统「减弱动态效果」
   - **不加新的原生依赖**(需要重新 EAS Build,OTA 推不出去);现有依赖已覆盖:reanimated、gesture-handler、expo-image、expo-haptics、expo-linear-gradient、expo-symbols
   - 后端新增顶级路由时同步 `deploy/nginx-agentdiary.conf` 的正则(`/users/...` 之下的新接口不用改)
 
@@ -90,4 +92,5 @@
 - `HANDOFF.md` — 交接速查:凭据位置、服务器、踩坑、待办、每次迭代的变更摘要
 - `deploy/README.md` — 部署与运维:`deploy.sh` 一键部署、`backup-db.sh` 备份、nginx 正则维护陷阱
 - `server/README.md` — 后端接口表、LLM 两档配置、测试(`pytest`)
+- `docs/blind-test-protocol.md` — 盲测协议:题库、流程、失败归因(Phase 0 门槛怎么测)
 - Notion「AgentDiary」页 — 关键信息与迭代记录的对外同步版本(含演示账号口令,不进 git)

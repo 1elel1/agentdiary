@@ -19,6 +19,8 @@ export interface PendingDiary {
   content: string;
   visibility: DiaryVisibility;
   allowed_user_ids: string[];
+  // 训练闸门(旧队列没有这个字段 = true)
+  use_for_twin?: boolean;
   created_at: string; // 本地落笔时间
 }
 

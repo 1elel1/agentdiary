@@ -12,26 +12,37 @@ export function Banner({
   onAction,
   style,
 }: {
-  tone?: 'info' | 'warning' | 'danger';
+  tone?: 'info' | 'warning' | 'danger' | 'success';
   message: string;
   actionLabel?: string;
   onAction?: () => void;
   style?: StyleProp<ViewStyle>;
 }) {
   const { colors } = useTheme();
-  const fg = tone === 'danger' ? colors.danger : tone === 'warning' ? colors.warning : colors.info;
+  const fg =
+    tone === 'danger'
+      ? colors.danger
+      : tone === 'warning'
+        ? colors.warning
+        : tone === 'success'
+          ? colors.success
+          : colors.info;
   const bg =
     tone === 'danger'
       ? 'rgba(255,59,48,0.10)'
       : tone === 'warning'
         ? 'rgba(255,159,10,0.12)'
-        : 'rgba(0,122,255,0.10)';
+        : tone === 'success'
+          ? 'rgba(52,199,89,0.12)'
+          : 'rgba(0,122,255,0.10)';
   const icon =
     tone === 'danger'
       ? 'exclamationmark.triangle.fill'
       : tone === 'warning'
         ? 'wifi.slash'
-        : 'info.circle';
+        : tone === 'success'
+          ? 'checkmark.circle.fill'
+          : 'info.circle';
   return (
     <View style={[styles.banner, { backgroundColor: bg }, style]}>
       <IconSymbol name={icon} size={16} color={fg} />

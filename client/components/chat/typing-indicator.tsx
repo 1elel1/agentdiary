@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withDelay,
   withRepeat,
@@ -15,7 +16,13 @@ import { useTheme } from '@/hooks/use-theme';
 
 function Dot({ delay, color }: { delay: number; color: string }) {
   const v = useSharedValue(0.3);
+  // 系统开了「减弱动态效果」就不呼吸,静态三点
+  const reduceMotion = useReducedMotion();
   useEffect(() => {
+    if (reduceMotion) {
+      v.value = 0.6;
+      return;
+    }
     v.value = withDelay(
       delay,
       withRepeat(
@@ -27,7 +34,7 @@ function Dot({ delay, color }: { delay: number; color: string }) {
         false,
       ),
     );
-  }, [delay, v]);
+  }, [delay, v, reduceMotion]);
   const style = useAnimatedStyle(() => ({
     opacity: v.value,
     transform: [{ translateY: (1 - v.value) * 3 }],

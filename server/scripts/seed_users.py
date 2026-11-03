@@ -123,6 +123,7 @@ def import_users(users: list[dict]) -> None:
                         source_diary_id=src.id,
                         assertion=c["assertion"].strip(),
                         confidence=float(c.get("confidence", 0.7)),
+                        kind=c.get("kind", "stable"),
                         created_at=src.created_at + timedelta(minutes=2),
                     )
                 )

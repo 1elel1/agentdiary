@@ -132,6 +132,8 @@ export function ActionSheet({
             {i > 0 && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
             <Pressable
               disabled={a.disabled}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !!a.disabled, selected: !!a.selected }}
               onPress={() => {
                 haptic.selection();
                 onClose();

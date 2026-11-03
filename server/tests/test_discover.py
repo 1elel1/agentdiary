@@ -67,7 +67,8 @@ def test_recommended_scores_tag_overlap_and_explains(client):
     _set_tags(hiker["user_id"], ["徒步", "露营"])
     _set_tags(cook["user_id"], ["做饭"])
 
-    recs = client.get("/users/recommended?limit=5", headers=auth(me["token"])).json()
+    # limit 放大到覆盖全部候选:推荐是「高分池里随机取 limit 个」,小 limit 下首位不稳定
+    recs = client.get("/users/recommended?limit=20", headers=auth(me["token"])).json()
     ids = [u["id"] for u in recs]
     assert ids[0] == hiker["user_id"]  # 标签重合的排第一
     assert "徒步" in recs[0]["reason"]

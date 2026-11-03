@@ -226,6 +226,8 @@ export default function VisitAgentScreen() {
           keyboardOffset={headerHeight}
           emptyTitle={emptyTitle}
           emptyHint={emptyHint}
+          starters={isSelf ? t.visit.starters : undefined}
+          startersTitle={isSelf ? t.visit.startersTitle : undefined}
           onMessageSent={judgeable ? refreshJudge : undefined}
           onHistoryLoaded={(count) => setIntroExpanded(count === 0)}
           intro={

@@ -64,6 +64,13 @@ def _migrate(conn) -> None:
         if not _column_exists(conn, "diaryentry", "locked"):
             conn.execute(text("ALTER TABLE diaryentry ADD COLUMN locked BOOLEAN DEFAULT 0"))
             added.append("diaryentry.locked")
+        if not _column_exists(conn, "diaryentry", "use_for_twin"):
+            conn.execute(text("ALTER TABLE diaryentry ADD COLUMN use_for_twin BOOLEAN DEFAULT 1"))
+            added.append("diaryentry.use_for_twin")
+    if conn.execute(text("SELECT name FROM sqlite_master WHERE name='personacard'")).fetchone():
+        if not _column_exists(conn, "personacard", "kind"):
+            conn.execute(text("ALTER TABLE personacard ADD COLUMN kind TEXT"))
+            added.append("personacard.kind")
     if added:
         logger.warning("迁移新增列: %s", added)
 

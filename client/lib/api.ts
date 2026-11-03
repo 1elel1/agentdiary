@@ -121,10 +121,12 @@ export const api = {
 
   listDiaries: () => request<DiaryEntry[]>('/diaries'),
 
+  // useForTwin=false:只保存,不蒸馏(识别到粘贴/转载内容时由用户选择)
   createDiary: (
     content: string,
-    visibility: DiaryVisibility = 'public',
+    visibility: DiaryVisibility = 'private',
     allowedUserIds: string[] = [],
+    useForTwin = true,
   ) =>
     request<DiaryEntry>('/diaries', {
       method: 'POST',
@@ -132,7 +134,15 @@ export const api = {
         content,
         visibility,
         allowed_user_ids: allowedUserIds,
+        use_for_twin: useForTwin,
       }),
+    }),
+
+  // 训练闸门开关:关 = 化身立刻忘掉从这篇学到的东西;开 = 重新学习
+  setDiaryUseForTwin: (id: string, useForTwin: boolean) =>
+    request<DiaryEntry>(`/diaries/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ use_for_twin: useForTwin }),
     }),
 
   changePassword: (oldPassword: string, newPassword: string) =>
@@ -183,6 +193,10 @@ export const api = {
 
   // 自己的人格卡片(带出处日记 id,可追溯)
   listPersonaCards: () => request<PersonaCard[]>('/persona-cards'),
+
+  // 把一条理解从化身里排除(来源日记保留)
+  deletePersonaCard: (id: string) =>
+    request<{ deleted: string }>(`/persona-cards/${id}`, { method: 'DELETE' }),
 
   // 手动重跑一篇日记的蒸馏(先清旧产物)
   redistillDiary: (id: string) =>

@@ -11,17 +11,30 @@ import {
 } from '@/lib/offline-queue';
 import type { DiaryEntry, DiaryVisibility } from '@/lib/types';
 
+// 刚保存的那篇:列表页据此显示一次「已保存」横幅(私密 / 不用于化身 / 离线),看过即清
+export interface LastSaved {
+  visibility: DiaryVisibility;
+  useForTwin: boolean;
+  offline: boolean;
+  at: number;
+}
+
 interface DiaryState {
   entries: DiaryEntry[];
   pending: PendingDiary[];
   loading: boolean;
   error: string | null;
+  lastSaved: LastSaved | null;
+  clearLastSaved: () => void;
   refresh: () => Promise<void>;
   add: (
     content: string,
     visibility: DiaryVisibility,
     allowedUserIds: string[],
+    useForTwin?: boolean,
   ) => Promise<void>;
+  // 训练闸门:关 = 化身立刻忘掉这篇;开 = 重新学习
+  setUseForTwin: (id: string, useForTwin: boolean) => Promise<void>;
   setVisibility: (
     id: string,
     visibility: DiaryVisibility,
@@ -40,6 +53,8 @@ export const useDiaryStore = create<DiaryState>((set, get) => ({
   pending: [],
   loading: false,
   error: null,
+  lastSaved: null,
+  clearLastSaved: () => set({ lastSaved: null }),
 
   refresh: async () => {
     set({ loading: true, error: null });
@@ -48,7 +63,7 @@ export const useDiaryStore = create<DiaryState>((set, get) => ({
       const remaining: PendingDiary[] = [];
       for (const item of queue) {
         try {
-          await api.createDiary(item.content, item.visibility, item.allowed_user_ids);
+          await api.createDiary(item.content, item.visibility, item.allowed_user_ids, item.use_for_twin ?? true);
         } catch {
           remaining.push(item);
         }
@@ -71,10 +86,13 @@ export const useDiaryStore = create<DiaryState>((set, get) => ({
     }
   },
 
-  add: async (content, visibility, allowedUserIds) => {
+  add: async (content, visibility, allowedUserIds, useForTwin = true) => {
     try {
-      const entry = await api.createDiary(content, visibility, allowedUserIds);
-      set({ entries: [entry, ...get().entries] });
+      const entry = await api.createDiary(content, visibility, allowedUserIds, useForTwin);
+      set({
+        entries: [entry, ...get().entries],
+        lastSaved: { visibility, useForTwin, offline: false, at: Date.now() },
+      });
     } catch (e) {
       if (!isNetworkError(e)) throw e;
       const item: PendingDiary = {
@@ -82,12 +100,20 @@ export const useDiaryStore = create<DiaryState>((set, get) => ({
         content,
         visibility,
         allowed_user_ids: allowedUserIds,
+        use_for_twin: useForTwin,
         created_at: new Date().toISOString(),
       };
       const queue = [...get().pending, item];
       await saveQueue(queue);
-      set({ pending: queue });
+      set({ pending: queue, lastSaved: { visibility, useForTwin, offline: true, at: Date.now() } });
     }
+  },
+
+  setUseForTwin: async (id, useForTwin) => {
+    const updated = await api.setDiaryUseForTwin(id, useForTwin);
+    const entries = get().entries.map((e) => (e.id === id ? updated : e));
+    await saveCache(entries);
+    set({ entries });
   },
 
   setVisibility: async (id, visibility, allowedUserIds) => {

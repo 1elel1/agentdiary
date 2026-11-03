@@ -24,7 +24,7 @@ export function LargeHeader({
           {title}
         </Text>
         {subtitle && (
-          <Text style={[Type.subhead, styles.subtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+          <Text style={[Type.subhead, styles.subtitle, { color: colors.textSecondary }]} numberOfLines={2}>
             {subtitle}
           </Text>
         )}

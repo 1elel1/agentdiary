@@ -58,10 +58,14 @@ class DiaryEntry(SQLModel, table=True):
     user_id: str = Field(index=True)
     content: str
     # 可见性分级:public=化身可对所有访客使用其衍生卡片;
-    # restricted=仅 DiaryAllowedUser 中指定的访客;private=仅自己(自聊)
-    visibility: str = Field(default="public")
+    # restricted=仅 DiaryAllowedUser 中指定的访客;private=仅自己(自聊)。
+    # 默认私密(v4.3):这是私密日记,扩大可见范围必须是用户的主动选择
+    visibility: str = Field(default="private")
     # 手势锁标记:客户端据此隐藏预览并要求图案验证(图案本身仅存客户端本机)
     locked: bool = Field(default=False)
+    # 训练闸门:False = 只保存、不用于化身(不蒸馏,衍生物清空)。粘贴的网页、
+    # 转载、清单不该变成「这个人认为…」;用户可随时切换
+    use_for_twin: bool = Field(default=True)
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -138,5 +142,8 @@ class PersonaCard(SQLModel, table=True):
     source_diary_id: str = Field(foreign_key="diaryentry.id", index=True)
     assertion: str
     confidence: float = Field(ge=0.0, le=1.0)
+    # 断言性质:stable=稳定的观点/偏好/性格;mood=当下感受、近期状态;
+    # guess=证据不足的推测(展示给用户、不注入化身 prompt);None=v4.3 之前抽取的旧卡片
+    kind: str | None = Field(default=None)
     superseded_by: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=_now)

@@ -4,6 +4,7 @@
 #   bash deploy/task.sh seed-users         # 导入 server/seed 里的种子用户(幂等)
 #   bash deploy/task.sh purge-seed-users   # 删除全部种子用户及其数据
 #   bash deploy/task.sh seed-count         # 用户数量统计
+#   bash deploy/task.sh backfill-card-kinds # v4.3:种子用户旧卡片统一标 kind=stable(一次性)
 #
 # 注意:Actions 日志是公开的(仓库公开),这里的任务只打印数量,不打印用户名和口令。
 # 环境变量(数据目录、API Key)从 /etc/agentdiary.env 读,文件是 root:600,所以用 sudo 读;
@@ -13,8 +14,8 @@ cd "$(dirname "$0")/.."
 
 TASK=${1:-}
 case "$TASK" in
-  seed-users|purge-seed-users|seed-count) ;;
-  *) echo "未知任务: '$TASK'(可选: seed-users / purge-seed-users / seed-count)" >&2; exit 2 ;;
+  seed-users|purge-seed-users|seed-count|backfill-card-kinds) ;;
+  *) echo "未知任务: '$TASK'(可选: seed-users / purge-seed-users / seed-count / backfill-card-kinds)" >&2; exit 2 ;;
 esac
 
 if [ -r /etc/agentdiary.env ] || sudo -n test -r /etc/agentdiary.env 2>/dev/null; then
@@ -32,4 +33,5 @@ case "$TASK" in
   seed-users)        $PY scripts/seed_users.py ;;
   purge-seed-users)  $PY scripts/seed_users.py --purge ;;
   seed-count)        $PY scripts/seed_users.py --count ;;
+  backfill-card-kinds) $PY scripts/backfill_card_kinds.py ;;
 esac

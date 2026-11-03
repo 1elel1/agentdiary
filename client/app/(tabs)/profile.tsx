@@ -36,7 +36,7 @@ function Profile() {
   const language = useSettingsStore((s) => s.language);
   const setLanguage = useSettingsStore((s) => s.setLanguage);
   const t = useT();
-  const { status, persona, cardCount, refresh, reset } = useProfileStore();
+  const { status, persona, inUseCount, pendingCount, refresh, reset } = useProfileStore();
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const [langSheet, setLangSheet] = useState(false);
@@ -172,7 +172,7 @@ function Profile() {
             icon="brain.head.profile"
             iconColor={colors.info}
             title={t.profile.cards}
-            value={t.common.cardsShort(cardCount)}
+            subtitle={inUseCount || pendingCount ? t.cards.status(inUseCount, pendingCount) : t.cards.none}
             onPress={() => router.push('/persona-cards')}
           />
           <ListRow

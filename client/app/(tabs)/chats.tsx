@@ -78,9 +78,11 @@ function PersonRow({
           <Text style={[Type.headline, styles.rowName, { color: colors.text }]} numberOfLines={1}>
             {user.username}
           </Text>
-          <Text style={[Type.caption1, { color: colors.textTertiary }]} numberOfLines={1}>
-            {trailing ?? metaLine(user, t)}
-          </Text>
+          {trailing ? (
+            <Text style={[Type.caption1, { color: colors.textTertiary }]} numberOfLines={1}>
+              {trailing}
+            </Text>
+          ) : null}
         </View>
         {hint ? (
           <View style={styles.hintRow}>
@@ -94,11 +96,15 @@ function PersonRow({
             </Text>
           </View>
         ) : null}
-        {showTags && user.tags.length > 0 && (
-          <View style={styles.tags}>
-            {user.tags.slice(0, 3).map((t) => (
-              <Pill key={t} label={t} tone="neutral" />
-            ))}
+        {/* 标签和「几条理解」放到底行,别和名字抢同一行(窄屏、多语言下会互相截断) */}
+        {((showTags && user.tags.length > 0) || !trailing) && (
+          <View style={styles.metaRow}>
+            {showTags && user.tags.slice(0, 3).map((tag) => <Pill key={tag} label={tag} tone="neutral" />)}
+            {!trailing && (
+              <Text style={[Type.caption1, styles.meta, { color: colors.textTertiary }]} numberOfLines={1}>
+                {metaLine(user, t)}
+              </Text>
+            )}
           </View>
         )}
       </View>
@@ -134,7 +140,7 @@ function Chats() {
   const { colors } = useTheme();
   const t = useT();
   const { username, userId, avatarTs } = useAuthStore();
-  const { persona, cardCount, refresh: refreshProfile } = useProfileStore();
+  const { persona, inUseCount, pendingCount, refresh: refreshProfile } = useProfileStore();
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<UserSummary[]>([]);
@@ -287,28 +293,27 @@ function Chats() {
           ) : null
         ) : (
           <>
-            {/* 我的化身 */}
+            {/* 我的化身:这一页的主角。先说化身学到了什么、怎么学的,再给一个明确的「去检验」 */}
             <Card onPress={openSelf} style={styles.selfCard}>
               <View style={styles.selfTop}>
                 <Avatar username={username ?? t.tabs.me} userId={userId} avatarTs={avatarTs} size={54} />
                 <View style={styles.rowBody}>
                   <Text style={[Type.headline, { color: colors.text }]}>{t.chats.myAvatar}</Text>
-                  <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {t.chats.fedBy(cardCount)}
+                  <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={2}>
+                    {inUseCount || pendingCount ? t.cards.status(inUseCount, pendingCount) : t.cards.none}
+                  </Text>
+                  <Text style={[Type.caption1, { color: colors.textTertiary }]} numberOfLines={1}>
+                    {t.visit.selfSubtitle}
                   </Text>
                 </View>
-                <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
               </View>
               <View style={[styles.selfFooter, { borderTopColor: colors.separator }]}>
-                <Pill
-                  label={persona ? t.chats.personaSet : t.chats.personaUnset}
-                  tone={persona ? 'tint' : 'warning'}
-                  icon="person.text.rectangle.fill"
-                />
+                <Button title={t.chats.testIt} size="sm" icon="bubble.left.fill" onPress={openSelf} />
                 <Button
-                  title={persona ? t.common.edit : t.chats.writeOne}
+                  title={persona ? t.profile.persona : t.chats.writeOne}
                   variant="ghost"
                   size="sm"
+                  icon="person.text.rectangle.fill"
                   onPress={() => router.push('/persona-editor')}
                   style={styles.selfAction}
                 />
@@ -412,13 +417,14 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 32 },
   search: { paddingHorizontal: 20, marginBottom: 14 },
   selfCard: { marginHorizontal: 20, marginBottom: 20, padding: 0 },
-  selfTop: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
+  selfTop: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, paddingBottom: 14 },
   selfFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   selfAction: { paddingHorizontal: 8 },
@@ -430,7 +436,8 @@ const styles = StyleSheet.create({
   rowName: { flexShrink: 1 },
   hintRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   hintText: { flex: 1 },
-  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 },
+  meta: { marginLeft: 'auto' },
   separator: { height: StyleSheet.hairlineWidth, marginLeft: 80 },
   recHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 12 },
   recLabel: { marginBottom: 6 },

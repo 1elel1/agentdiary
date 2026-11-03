@@ -39,15 +39,21 @@ _SITUATION_SYSTEM = (
     "只输出一句话的情境描述,不要任何解释或多余内容。"
 )
 
+# 断言性质:只有 stable / mood 会注入化身 prompt;guess 只展示给本人确认
+CARD_KINDS = ("stable", "mood", "guess")
+
 _CARDS_SYSTEM = (
-    "你是人格分析助手。从用户日记中抽取「人格断言卡片」:关于这个人的观点、"
+    "你是人格分析助手。从用户日记中抽取「人格断言卡片」:关于这个人本人的观点、"
     "价值排序、偏好、幽默方式、行为模式、当下心态的陈述句。要求:\n"
-    "- 每条断言独立、具体,用第三人称(如「他认为…」「他习惯…」)\n"
+    "- 每条断言独立、具体,用无性别的第三人称「TA」(如「TA 认为…」「TA 习惯…」),不要用「他」「她」\n"
+    "- 只抽取能反映作者本人的内容。日记里转述的新闻、规章条文、他人的观点、复制粘贴的网页或文章、"
+    "清单和待办,一律不要变成断言;如果整段文字看起来不是作者本人的记述,输出空数组\n"
     "- 简短或情绪化的内容同样有信息量:担忧、自嘲、兴奋、自我怀疑都可以形成断言"
-    "(如「他正为考试失败而自我怀疑」),不要因为内容短就拒绝\n"
-    "- confidence 为 0~1,表示日记证据对该断言的支撑强度\n"
-    "- 不编造日记中没有依据的断言;确实完全无法提炼时输出空数组\n"
-    '无论如何只输出 JSON 对象:{"cards": [{"assertion": "...", "confidence": 0.8}]}'
+    "(如「TA 正为考试失败而自我怀疑」),不要因为内容短就拒绝\n"
+    "- kind 三选一:stable=稳定的观点、偏好、性格、价值排序;mood=当下的感受、近期的状态或正在经历的事;"
+    "guess=证据不足、只是可能的推测(措辞用「TA 可能…」)\n"
+    "- confidence 为 0~1,表示日记证据对该断言的支撑强度;不编造日记中没有依据的断言\n"
+    '无论如何只输出 JSON 对象:{"cards": [{"assertion": "...", "kind": "stable", "confidence": 0.8}]}'
 )
 
 
@@ -84,12 +90,17 @@ def extract_persona_cards(diary: DiaryEntry, clean_content: str) -> list[Persona
             confidence = min(1.0, max(0.0, float(item.get("confidence", 0.5))))
         except (TypeError, ValueError):
             confidence = 0.5
+        kind = str(item.get("kind", "")).strip().lower()
+        if kind not in CARD_KINDS:
+            # 模型没给或给错:置信度低就当推测,否则当稳定断言
+            kind = "guess" if confidence < 0.5 else "stable"
         cards.append(
             PersonaCard(
                 user_id=diary.user_id,
                 source_diary_id=diary.id,
                 assertion=assertion,
                 confidence=confidence,
+                kind=kind,
             )
         )
     return cards
@@ -121,6 +132,9 @@ def run_pipeline_for_diary(diary_id: str) -> None:
     with Session(engine) as session:
         diary = session.get(DiaryEntry, diary_id)
         if diary is None:
+            return
+        if not diary.use_for_twin:
+            logger.info("跳过蒸馏(用户选择不用于化身) diary=%s", diary_id)
             return
         clean = sanitize(diary.content)  # 红线:先脱敏再进入任何蒸馏步骤
         slices = slice_diary(clean)

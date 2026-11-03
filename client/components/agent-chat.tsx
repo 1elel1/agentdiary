@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
+  ScrollView,
   StyleSheet,
+  Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,7 +18,11 @@ import { MessageBubble } from '@/components/chat/message-bubble';
 import { TypingIndicator } from '@/components/chat/typing-indicator';
 import { Avatar } from '@/components/ui/avatar';
 import { Banner } from '@/components/ui/banner';
+import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { Radius, Type } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 import { useT } from '@/lib/i18n';
@@ -41,12 +48,17 @@ export function AgentChat({
   onMessageSent,
   onHistoryLoaded,
   intro,
+  starters,
+  startersTitle,
 }: {
   targetUserId?: string;
   emptyTitle: string;
   emptyHint: string;
   avatar?: ChatAvatar;
   keyboardOffset?: number;
+  // 自聊:测试型开场问题。空会话时列出三个,有历史后收成输入条上方的一排,随时能「再问一个能验证我的问题」
+  starters?: string[];
+  startersTitle?: string;
   // 一轮问答落库后回调(裁判入口用它刷新可评估的轮次数)
   onMessageSent?: () => void;
   // 历史拉到后回调条数(访问页据此决定自我介绍卡默认展开还是收起)
@@ -56,8 +68,16 @@ export function AgentChat({
 }) {
   const insets = useSafeAreaInsets();
   const t = useT();
+  const { colors } = useTheme();
 
   const [messages, setMessages] = useState<Message[]>([]);
+  // 开场问题每次展示三个,「换一批」轮转
+  const [starterPage, setStarterPage] = useState(0);
+  const visibleStarters = useMemo(() => {
+    if (!starters?.length) return [];
+    const start = (starterPage * 3) % starters.length;
+    return [0, 1, 2].map((i) => starters[(start + i) % starters.length]).filter((q, i, arr) => arr.indexOf(q) === i);
+  }, [starters, starterPage]);
   const [loaded, setLoaded] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -158,6 +178,34 @@ export function AgentChat({
             <View>
               {intro && <View style={styles.intro}>{intro}</View>}
               <EmptyState icon="hand.wave.fill" title={emptyTitle} message={emptyHint} />
+              {visibleStarters.length > 0 && (
+                <View style={styles.starterBlock}>
+                  {startersTitle && (
+                    <Text style={[Type.footnote, styles.starterTitle, { color: colors.textSecondary }]}>{startersTitle}</Text>
+                  )}
+                  {visibleStarters.map((q) => (
+                    <Pressable
+                      key={q}
+                      disabled={sending}
+                      onPress={() => send(q)}
+                      style={({ pressed }) => [
+                        styles.starterCard,
+                        { backgroundColor: colors.surface, borderColor: colors.separator, opacity: pressed ? 0.7 : 1 },
+                      ]}>
+                      <IconSymbol name="sparkles" size={14} color={colors.tint} />
+                      <Text style={[Type.subhead, styles.starterText, { color: colors.text }]}>{q}</Text>
+                    </Pressable>
+                  ))}
+                  <Button
+                    title={t.chats.shuffle}
+                    variant="ghost"
+                    size="sm"
+                    icon="arrow.triangle.2.circlepath"
+                    onPress={() => setStarterPage((p) => p + 1)}
+                    style={styles.starterShuffle}
+                  />
+                </View>
+              )}
             </View>
           }
           renderItem={({ item }) => (
@@ -167,6 +215,31 @@ export function AgentChat({
       )}
 
       {sending && <TypingIndicator hint={t.visit.typing} />}
+      {visibleStarters.length > 0 && messages.length > 0 && !sending && (
+        <ScrollView
+          horizontal
+          keyboardShouldPersistTaps="handled"
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.starterStrip}>
+          {visibleStarters.map((q) => (
+            <Pressable
+              key={q}
+              onPress={() => send(q)}
+              style={({ pressed }) => [styles.starterChip, { backgroundColor: colors.tintSoft, opacity: pressed ? 0.7 : 1 }]}>
+              <Text style={[Type.footnote, { color: colors.tint, fontWeight: '600' }]} numberOfLines={1}>
+                {q}
+              </Text>
+            </Pressable>
+          ))}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t.chats.shuffle}
+            onPress={() => setStarterPage((p) => p + 1)}
+            style={({ pressed }) => [styles.starterChip, styles.starterMore, { backgroundColor: colors.fill, opacity: pressed ? 0.7 : 1 }]}>
+            <IconSymbol name="arrow.triangle.2.circlepath" size={13} color={colors.textSecondary} weight="semibold" />
+          </Pressable>
+        </ScrollView>
+      )}
       {error && (
         <Banner
           tone="danger"
@@ -196,4 +269,20 @@ const styles = StyleSheet.create({
   listEmpty: { justifyContent: 'center' },
   intro: { paddingBottom: 6 },
   banner: { marginHorizontal: 12, marginBottom: 8 },
+  starterBlock: { paddingHorizontal: 22, gap: 8, marginTop: -8 },
+  starterTitle: { marginBottom: 2, marginLeft: 2 },
+  starterCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  starterText: { flex: 1 },
+  starterShuffle: { alignSelf: 'center', marginTop: 2 },
+  starterStrip: { paddingHorizontal: 12, paddingBottom: 8, gap: 8, alignItems: 'center' },
+  starterChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: Radius.pill, maxWidth: 260 },
+  starterMore: { paddingHorizontal: 10 },
 });

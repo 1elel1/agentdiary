@@ -51,15 +51,16 @@ cd server && .venv/bin/python -m pytest
 | GET/PUT | /users/me/status | 今日状态(24 小时过期) |
 | PUT | /users/me/username · /users/me/password · /users/me/avatar | 改名 / 改密(吊销其他设备)/ 头像(base64,≤ 8MB) |
 | DELETE | /users/me | 注销账号,级联删除全部数据(需密码) |
-| GET/POST | /diaries | 日记列表 / 写日记(触发后台蒸馏;20 篇/天) |
+| GET/POST | /diaries | 日记列表(带 `card_count`、`use_for_twin`)/ 写日记(**默认 private**;`use_for_twin=false` 只保存不蒸馏;20 篇/天) |
 | PUT | /diaries/{id} | 改内容(落笔 24 小时内;旧衍生数据作废并重蒸馏) |
-| PATCH | /diaries/{id} | 改可见性(public / restricted + 白名单 / private)、手势锁标记 |
+| PATCH | /diaries/{id} | 改可见性(public / restricted + 白名单 / private)、手势锁标记、训练闸门 `use_for_twin`(关 = 清空衍生物,开 = 重蒸馏) |
 | GET | /diaries/{id}/allowed | restricted 白名单 |
 | POST | /diaries/{id}/distill | 手动重跑蒸馏 |
 | DELETE | /diaries/{id} | 删除日记(级联删除对话对与卡片) |
 | POST | /chat | 与化身对话(不传 target_user_id = 自聊;30 条/小时)。LLM 不可用返回 503 |
 | GET | /chat/history | 对话历史,按 (化身主人, 访客) 隔离;limit ≤ 200 |
-| GET | /persona-cards | 自己的人格卡片(含出处日记 id) |
+| GET | /persona-cards | 自己的人格卡片(含出处日记 id 与 `kind`:stable / mood / guess / null=旧卡片) |
+| DELETE | /persona-cards/{id} | 把一条理解从化身里排除(硬删除,来源日记保留) |
 | GET/POST | /judge/{id} · /judge/{id}/evaluate | AI 裁判状态 / 评估(≥ 5 句才能评,≥ 70 分解锁) |
 | GET/POST | /dm · /dm/{id} | 已解锁的真人会话列表 / 收发私信 |
 | GET | /health | 健康检查 |
@@ -107,7 +108,10 @@ cd server && .venv/bin/python scripts/seed_users.py           # 幂等,已存在
 | 对外形象 | 用户在「我 → 对外形象」亲自写 | 怎么呈现:先聊什么、什么语气、避开什么。访客模式注入,自聊也带上 |
 
 访客只拿得到 public 日记(或 restricted 且对其开放的日记)衍生的卡片;prompt 明确
-禁止复述日记原文与可识别的私人细节。没有卡片但有对外形象时,化身靠它撑起对话
+禁止复述日记原文与可识别的私人细节。卡片带 `kind`(v4.3):stable 稳定观点/偏好/性格、
+mood 当下感受(prompt 里标「近期状态」)、guess 证据不足的推测——**guess 只展示给本人确认,不注入 prompt**;
+蒸馏 prompt 明确不把转载的新闻、规章、网页、清单变成断言。用户还可以把单篇日记设为
+「不用于化身」(`use_for_twin=false`,衍生物清空)或排除单条理解(`DELETE /persona-cards/{id}`)。没有卡片但有对外形象时,化身靠它撑起对话
 (冷启动不再只会说「我一无所知」)。
 
 ## LLM 接入
