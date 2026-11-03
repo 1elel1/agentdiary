@@ -97,21 +97,21 @@ sudo journalctl -u agentdiary-api -n 100 --no-pager
 
 ## 待办(按优先级)
 
-### 1. 把 v4.0 部署到服务器并真机过一遍
+### 1. v4.0 已部署到服务器(2026-11-03 11:24 UTC),待真机验收与合并
 
-本次迭代在云端 session 里做,**那台 session 连不上服务器**(出网策略没放行
-`43.130.127.226`,22 端口也不通),所以代码已推到分支但还没部署。两条路任选:
+**已完成**:GitHub Actions「Deploy to server」第 2 次运行成功
+(https://github.com/1elel1/agentdiary/actions/runs/41626981151):服务器同步到提交 `4565a2ec`,
+9 个测试在服务器上通过,API 重启,`/health` 本机与公网均 ok,网页版 `/login` 200。
+secret `DEPLOY_SSH_KEY` 已配好,以后部署:提交信息带 `[deploy]` 再 push(main / claude/** / deploy/** 分支),
+或 `git tag deploy-xxx && git push origin deploy-xxx`,或工作流进 main 后在 Actions 页点 Run workflow。
 
-**A. GitHub Actions(推荐,之后每次部署都能在 GitHub 上一键跑,云端 session 也能触发)**
-1. 仓库 Settings → Secrets and variables → Actions → New repository secret:
-   名字 `DEPLOY_SSH_KEY`,值 = 本机 `~/.ssh/test.pem` 全文(只需做这一次)
-2. 打开 Actions 里那次失败的「Deploy to server」运行(分支最新提交,只差 secret)→ Re-run failed jobs;
-   以后部署就是提交信息带 `[deploy]` 再 push、或 `git tag deploy-xxx && git push origin deploy-xxx`、
-   或工作流进 main 后在 Actions 页点 Run workflow
-3. 绿了就去 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象
+**还没做**:
+1. 浏览器打开 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象(旧标签页先强刷)
+2. 没问题就合进 main(见下)
+3. App 端 OTA(需要本机 Expo 登录,云端 session 做不了)
 
-**B. 登服务器手动跑**(注意:服务器上的 `/home/ubuntu/agentdiary` **不是 git 仓库**,当初是直接传上去的目录,
-所以 `deploy.sh` 的 git 拉取模式在那里用不了;要么走 A,要么自己把代码传上去后 `NO_GIT=1 bash deploy/deploy.sh`)
+手动兜底(注意:服务器上的 `/home/ubuntu/agentdiary` **不是 git 仓库**,当初是直接传上去的目录,
+所以 `deploy.sh` 的 git 拉取模式在那里用不了;Actions 对它走的是 rsync 同步):
 
 ```bash
 ssh agentdiary
@@ -216,6 +216,10 @@ App 失联**,修复要重新过审)、隐私政策 URL、App 隐私标签(需声
 - 注册接口加 IP 限流(5 个/小时);`/chat/history` 的 limit 封顶 200;`/users` 的卡片数改为一条 GROUP BY
 - `distill.log` 移到数据目录(原来写在代码目录)
 - 新增 `server/tests/`(9 个用例,LLM 打桩),`deploy/deploy.sh` 部署前先跑
+
+**部署**
+- 新增 GitHub Actions 工作流 `.github/workflows/deploy.yml`(触发:提交信息带 `[deploy]` 的分支 push / `deploy-*` 标签 / 手动);服务器目录不是 git 仓库,工作流对它走 rsync 同步
+- 2026-11-03 11:24 UTC 第 2 次运行成功部署提交 `4565a2ec`,公网健康检查通过
 
 **文档**
 - `CLAUDE.md` §3 校准到代码现状(访客 / 裁判 / 私信 / 名人化身已存在),§4 补客户端 UI 约定;`AGENTS.md` 与之同步
