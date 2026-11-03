@@ -37,6 +37,13 @@ class User(SQLModel, table=True):
     # 别人看的),不属于日记级敏感数据
     public_persona: str | None = Field(default=None)
     persona_updated_at: datetime | None = Field(default=None)
+    # 兴趣标签(JSON list[str]):由 LLM 从人格卡片 + 对外形象提炼,或种子数据直接给定。
+    # 发现页的推荐和筛选靠它;不是事实来源,只用于匹配
+    tags_json: str | None = Field(default=None)
+    tags_updated_at: datetime | None = Field(default=None)
+    # 种子用户:冷启动期由我们撰写资料的测试账号,可登录(统一口令),不开放真人对话;
+    # 标记只用于管理(批量清理/重建),不对访客展示
+    is_seed: bool = Field(default=False)
     created_at: datetime = Field(default_factory=_now)
 
 

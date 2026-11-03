@@ -12,6 +12,7 @@ import type {
   JudgeStatus,
   PersonaCard,
   PersonaOut,
+  TagCount,
   UserProfile,
   UserSummary,
 } from './types';
@@ -93,7 +94,26 @@ export const api = {
 
   logout: () => request<{ ok: boolean }>('/auth/logout', { method: 'POST' }),
 
+  // 「门面」:名人化身 + 我聊过的人。不再罗列全站用户;找人用搜索,认识新人用推荐
   listUsers: () => request<UserSummary[]>('/users'),
+
+  // 按用户名搜索(包含匹配,最多 20 条)
+  searchUsers: (q: string) => request<UserSummary[]>(`/users/search?q=${encodeURIComponent(q)}`),
+
+  // 为你推荐:按兴趣标签重合 + 资料完整度 + 活跃度打分,带推荐理由;seed 换一批,tag 只看某个标签
+  recommendedUsers: (opts: { limit?: number; tag?: string | null; seed?: number } = {}) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(opts.limit ?? 8));
+    if (opts.tag) params.set('tag', opts.tag);
+    if (opts.seed) params.set('seed', String(opts.seed));
+    return request<UserSummary[]>(`/users/recommended?${params.toString()}`);
+  },
+
+  // 热门兴趣标签(筛选条)
+  listTags: () => request<TagCount[]>('/users/tags'),
+
+  // 最近和哪些化身聊过(带最后一句预览)
+  recentContacts: () => request<UserSummary[]>('/users/recent'),
 
   listDiaries: () => request<DiaryEntry[]>('/diaries'),
 
@@ -187,7 +207,9 @@ export const api = {
     }),
 
   getDiaryAllowed: (id: string) =>
-    request<{ allowed_user_ids: string[] }>(`/diaries/${id}/allowed`),
+    request<{ allowed_user_ids: string[]; allowed_users: { id: string; username: string }[] }>(
+      `/diaries/${id}/allowed`,
+    ),
 
   // 删除日记会在后端级联删除衍生的对话对与人格卡片(隐私红线)
   deleteDiary: (id: string) =>

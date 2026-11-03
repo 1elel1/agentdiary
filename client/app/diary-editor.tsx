@@ -1,10 +1,9 @@
 import { useHeaderHeight } from '@react-navigation/elements';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,13 +14,13 @@ import {
 import { HeaderButton } from '@/components/ui/header-button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { SegmentedControl } from '@/components/ui/segmented';
+import { UserPicker, type SelectedUsers } from '@/components/user-picker';
 import { Radius, Type, webNoOutline } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { api } from '@/lib/api';
 import { dialog } from '@/lib/dialog';
 import { formatLongDate, parseUtc } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
-import type { DiaryVisibility, UserSummary } from '@/lib/types';
+import type { DiaryVisibility } from '@/lib/types';
 import { useDiaryStore } from '@/stores/diary-store';
 
 const VISIBILITY_OPTIONS: { key: DiaryVisibility; label: string; hint: string }[] = [
@@ -50,29 +49,9 @@ export default function DiaryEditorScreen() {
 
   const [content, setContent] = useState(initialContent ?? '');
   const [visibility, setVisibility] = useState<DiaryVisibility>('public');
-  const [users, setUsers] = useState<UserSummary[]>([]);
-  const [allowed, setAllowed] = useState<Set<string>>(new Set());
+  // 「指定的人」白名单:搜索添加(全站用户不再罗列)
+  const [allowed, setAllowed] = useState<SelectedUsers>(new Map());
   const [saving, setSaving] = useState(false);
-
-  // 选「指定的人」时才拉用户列表;名人化身不参与
-  useEffect(() => {
-    if (visibility === 'restricted' && users.length === 0) {
-      api
-        .listUsers()
-        .then((list) => setUsers(list.filter((u) => !u.is_builtin)))
-        .catch(() => {});
-    }
-  }, [visibility, users.length]);
-
-  const toggleUser = (id: string) => {
-    haptic.selection();
-    setAllowed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const dirty = content.trim().length > 0 && content.trim() !== (initialContent ?? '').trim();
 
@@ -84,7 +63,7 @@ export default function DiaryEditorScreen() {
       if (isEditing && diaryId) {
         await edit(diaryId, text);
       } else {
-        await add(text, visibility, visibility === 'restricted' ? [...allowed] : []);
+        await add(text, visibility, visibility === 'restricted' ? [...allowed.keys()] : []);
       }
       haptic.success();
       router.back();
@@ -166,23 +145,7 @@ export default function DiaryEditorScreen() {
 
             {visibility === 'restricted' && (
               <ScrollView style={styles.userList} keyboardShouldPersistTaps="handled">
-                {users.length === 0 ? (
-                  <Text style={[Type.footnote, { color: colors.textTertiary }]}>暂无其他用户可选</Text>
-                ) : (
-                  users.map((u) => {
-                    const checked = allowed.has(u.id);
-                    return (
-                      <Pressable key={u.id} style={styles.userRow} onPress={() => toggleUser(u.id)}>
-                        <IconSymbol
-                          name={checked ? 'checkmark.circle.fill' : 'circle'}
-                          size={22}
-                          color={checked ? colors.tint : colors.textTertiary}
-                        />
-                        <Text style={[Type.callout, { color: colors.text }]}>{u.username}</Text>
-                      </Pressable>
-                    );
-                  })
-                )}
+                <UserPicker selected={allowed} onChange={setAllowed} />
               </ScrollView>
             )}
           </View>
@@ -207,6 +170,5 @@ const styles = StyleSheet.create({
   },
   panelTitle: { marginLeft: 2 },
   hint: { marginLeft: 2, lineHeight: 16 },
-  userList: { maxHeight: 160 },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  userList: { maxHeight: 220 },
 });

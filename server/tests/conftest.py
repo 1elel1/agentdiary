@@ -26,6 +26,8 @@ class FakeLLM:
         self.fail = False
         # 下一次蒸馏要抽出的卡片;用例按需改它(替换方法本身不生效,fixture 已绑定)
         self.cards = [{"assertion": "TA 最近在为考试焦虑", "confidence": 0.8}]
+        # 标签提炼的返回
+        self.tags = ["考试", "焦虑"]
 
     def chat_messages(self, system, messages, *, profile=None, json_mode=False, timeout=300.0, max_tokens=None):
         if self.fail:
@@ -39,6 +41,8 @@ class FakeLLM:
 
     def chat_json(self, system, prompt, *, profile=None):
         self.calls.append({"system": system, "messages": [{"role": "user", "content": prompt}], "profile": profile})
+        if "标签" in system:
+            return {"tags": list(self.tags)}
         return {"cards": list(self.cards)}
 
 

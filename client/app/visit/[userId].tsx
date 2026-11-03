@@ -52,6 +52,13 @@ function IntroCard({
           {profile.persona}
         </Text>
       )}
+      {expanded && profile.tags.length > 0 && (
+        <View style={styles.introTags}>
+          {profile.tags.map((t) => (
+            <Pill key={t} label={t} tone="tint" />
+          ))}
+        </View>
+      )}
       {!hasPersona && (
         <Text style={[Type.footnote, styles.introBody, { color: colors.textTertiary }]}>
           化身会依据 TA 的日记学到的东西来聊;问到它不知道的,它会说得由本人来答。
@@ -78,10 +85,9 @@ export default function VisitAgentScreen() {
 
   const isSelf = userId === myId;
   const isBuiltin = builtin === '1';
-  // 名人化身没有真人,不显示裁判入口
-  const judgeable = !isSelf && !isBuiltin;
-
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  // 名人化身、种子账号背后没有真人,不显示裁判入口;资料拉到之前不请求裁判接口(避免对种子用户打出 400)
+  const judgeable = !isSelf && !isBuiltin && profile?.accepts_real_chat === true;
   const [introExpanded, setIntroExpanded] = useState(true);
   const [judge, setJudge] = useState<JudgeStatus | null>(null);
   const [evaluating, setEvaluating] = useState(false);
@@ -146,7 +152,9 @@ export default function VisitAgentScreen() {
     ? '它由你的日记喂养。说点什么试试,看它像不像你——写的日记越多,它越像。'
     : isBuiltin
       ? '由人物设定驱动的化身,随便聊聊。'
-      : `它会以 ${displayName} 的口吻和你聊。聊够几句后,可以请 AI 裁判评估你们合不合拍。`;
+      : profile && !profile.accepts_real_chat
+        ? `它会以 ${displayName} 的口吻和你聊。TA 还没开放真人对话,先和化身聊聊吧。`
+        : `它会以 ${displayName} 的口吻和你聊。聊够几句后,可以请 AI 裁判评估你们合不合拍。`;
 
   return (
     <ScreenBackground setting={chatBg}>
@@ -222,7 +230,7 @@ export default function VisitAgentScreen() {
           onMessageSent={judgeable ? refreshJudge : undefined}
           onHistoryLoaded={(count) => setIntroExpanded(count === 0)}
           intro={
-            judgeable && profile ? (
+            !isSelf && !isBuiltin && profile ? (
               <IntroCard profile={profile} expanded={introExpanded} onToggle={() => setIntroExpanded((v) => !v)} />
             ) : isSelf && profile && !profile.persona ? (
               <Card tone="tint" style={styles.intro}>
@@ -289,7 +297,8 @@ const styles = StyleSheet.create({
   intro: { marginHorizontal: 2, marginTop: 6, marginBottom: 10 },
   introHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 12 },
   introTitle: { flex: 1, fontWeight: '600' },
-  introBody: { paddingHorizontal: 14, paddingBottom: 14, lineHeight: 22 },
+  introBody: { paddingHorizontal: 14, paddingBottom: 12, lineHeight: 22 },
+  introTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 14, paddingBottom: 14 },
   introAction: { alignSelf: 'flex-end', marginTop: 4 },
   report: { gap: 14, paddingTop: 4 },
   reportScore: { textAlign: 'center', fontSize: 52, lineHeight: 60, fontWeight: '800', letterSpacing: -1 },

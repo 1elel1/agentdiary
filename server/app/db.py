@@ -48,6 +48,9 @@ def _migrate(conn) -> None:
             ("avatar_updated_at", "ALTER TABLE user ADD COLUMN avatar_updated_at TIMESTAMP"),
             ("public_persona", "ALTER TABLE user ADD COLUMN public_persona TEXT"),
             ("persona_updated_at", "ALTER TABLE user ADD COLUMN persona_updated_at TIMESTAMP"),
+            ("tags_json", "ALTER TABLE user ADD COLUMN tags_json TEXT"),
+            ("tags_updated_at", "ALTER TABLE user ADD COLUMN tags_updated_at TIMESTAMP"),
+            ("is_seed", "ALTER TABLE user ADD COLUMN is_seed BOOLEAN DEFAULT 0"),
         ):
             if not _column_exists(conn, "user", col):
                 conn.execute(text(ddl))

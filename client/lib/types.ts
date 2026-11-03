@@ -28,6 +28,18 @@ export interface UserSummary {
   avatar_updated_at: string | null;
   // 对外形象的单行摘要;null = 对方还没写
   persona_excerpt: string | null;
+  // 兴趣标签(LLM 从卡片和对外形象提炼)
+  tags: string[];
+  // 推荐理由(只有「为你推荐」接口会填)
+  reason: string | null;
+  // 最近一次对话的预览(只有「最近对话」接口会填)
+  last_message: string | null;
+  last_at: string | null;
+}
+
+export interface TagCount {
+  tag: string;
+  count: number;
 }
 
 // 化身资料页:对外形象全文在这里
@@ -39,6 +51,9 @@ export interface UserProfile {
   status: string | null;
   persona: string | null;
   avatar_updated_at: string | null;
+  tags: string[];
+  // 名人化身与种子账号背后没有真人,不能解锁真人对话
+  accepts_real_chat: boolean;
 }
 
 // 自己的对外形象

@@ -40,7 +40,11 @@ cd server && .venv/bin/python -m pytest
 |---|---|---|
 | POST | /auth/register · /auth/login · /auth/logout | 注册(5 个/小时/IP)、登录(10 次/10 分钟/IP)、登出 |
 | GET | /auth/me | 当前用户 |
-| GET | /users | 其他用户列表(卡片数、状态、对外形象摘要;名人化身在前) |
+| GET | /users | 「门面」:名人化身 + 我聊过的人。**不再罗列全站用户** |
+| GET | /users/search?q= | 按用户名搜索(包含匹配,≤20 条;120 次/小时) |
+| GET | /users/recommended?limit&tag&seed | 为你推荐:标签重合 ×3 + 有对外形象 + 卡片数 + 近 7 天写过日记 + 当日状态,带推荐理由;seed 换一批 |
+| GET | /users/tags | 热门兴趣标签(筛选条) |
+| GET | /users/recent | 最近聊过的化身(带最后一句预览) |
 | GET | /users/{id}/profile | 化身资料页:对外形象全文、状态、卡片数 |
 | GET | /users/{id}/avatar | 头像(不鉴权,uuid 路径不可猜) |
 | GET/PUT | /users/me/persona | **对外形象**(≤ 600 字;空 = 清除) |
@@ -61,6 +65,34 @@ cd server && .venv/bin/python -m pytest
 | GET | /health | 健康检查 |
 
 **新增顶级路由时同步 `deploy/nginx-agentdiary.conf` 的正则**,否则请求落到静态站。
+
+## 兴趣标签与推荐
+
+`app/recommend.py`。每个用户有 3~6 个短标签(`User.tags_json`):真实用户由 DISTILL 档从
+「对外形象 + 最近 30 张卡片」提炼(蒸馏出新卡片、或改了对外形象后在后台跑,失败只记日志);
+种子用户在资料里直接给定。推荐 = 打分取前 3×limit 再按 seed 打乱取 limit,所以「换一批」
+是高分池里的随机子集。理由写给用户看,只用公开信息(「你们都在意「徒步」「老电影」」)。
+这不是 CLAUDE.md §3 说的向量匹配引擎,只是发现页的可解释排序。
+
+## 种子用户
+
+`seed/users-*.json` 里是 100 份人工撰写的资料(用户名、对外形象、标签、状态、3 篇日记、
+5~6 张卡片、3 组对话范例),覆盖不同年龄、城市、职业与性格。导入:
+
+```bash
+cd server && .venv/bin/python scripts/seed_users.py           # 幂等,已存在的跳过
+.venv/bin/python scripts/seed_users.py --count                 # 数量统计
+.venv/bin/python scripts/seed_users.py --purge                 # 删除全部种子用户及衍生数据
+```
+
+- 统一口令:环境变量 `SEED_USER_PASSWORD`,否则读/生成数据目录下的 `seed-password.txt`(600),
+  **不打印**。服务器上:`sudo cat /var/lib/agentdiary/seed-password.txt`
+- 种子用户 `is_seed=1`:可登录、可被搜索/推荐、可访问其化身;**裁判与真人私信不开放**
+  (资料页 `accepts_real_chat=false`,客户端隐藏裁判入口)
+- 不跑 LLM 蒸馏,卡片与范例直接入库,不花 token
+- 通过 GitHub Actions 导入:提交信息带 `[deploy] [task:seed-users]`(见 deploy/README.md)
+
+`scripts/reset_password.py <用户名>`:重置任意账号密码(口令是哈希,找不回只能重置)。
 
 ## 化身 prompt 的三路输入
 

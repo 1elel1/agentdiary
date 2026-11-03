@@ -128,7 +128,11 @@ def get_allowed_users(
             select(DiaryAllowedUser).where(DiaryAllowedUser.diary_id == diary.id)
         )
     ]
-    return {"allowed_user_ids": ids}
+    users = [
+        {"id": u.id, "username": u.username}
+        for u in session.exec(select(User).where(User.id.in_(ids)))  # type: ignore[attr-defined]
+    ] if ids else []
+    return {"allowed_user_ids": ids, "allowed_users": users}
 
 
 class DiaryEdit(BaseModel):

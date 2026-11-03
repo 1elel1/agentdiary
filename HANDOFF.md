@@ -13,6 +13,9 @@
 | 千问 API Key | 服务器 `/etc/agentdiary.env`(root:root 600) |
 | SSH 私钥 | 本机 `~/.ssh/test.pem`,别名 `ssh agentdiary` |
 | 演示账号 `test` 的口令 | Notion「AgentDiary — 云端部署与运维速查」页 |
+| 100 个种子用户的统一口令 | 服务器 `/var/lib/agentdiary/seed-password.txt`(600;首次导入时自动生成) |
+
+密码一律 PBKDF2 加盐哈希,**找不回,只能重置**:`cd server && .venv/bin/python scripts/reset_password.py <用户名>`。
 
 ## 访问地址
 
@@ -192,6 +195,27 @@ App 失联**,修复要重新过审)、隐私政策 URL、App 隐私标签(需声
 - `CLAUDE.md` — 产品定位、技术方案、阶段门槛、隐私红线、客户端 UI 约定
 
 ## 迭代记录
+
+### v4.1 · 2026-11-03 · 发现页重做 + 100 个种子用户
+
+**发现页(对话 Tab)**
+- 不再罗列全站用户(隐私:注册即被所有人看到不合理)。`GET /users` 只返回名人化身 + 我聊过的人
+- 搜索用户名(`/users/search`,包含匹配,≤20 条);「为你推荐」(`/users/recommended`):标签重合 ×3 +
+  有对外形象 + 卡片数 + 近 7 天活跃,带可验证的推荐理由;标签筛选条(`/users/tags`);「换一批」换 seed
+- 「最近对话」分区(`/users/recent`);本机拖动排序与置顶功能移除(与推荐/最近对话重叠)
+- 兴趣标签 `User.tags_json`:蒸馏出新卡片或改对外形象后,DISTILL 档从卡片 + 对外形象提炼 3~6 个(每次约 300 token)
+- 「指定的人」白名单改为搜索添加(`UserPicker`),`/diaries/{id}/allowed` 多返回 `allowed_users` 带名字
+
+**种子用户**
+- `server/seed/users-*.json`:100 份人工撰写资料(不同年龄/城市/职业/性格,各 3 篇日记、5~6 张卡片、3 组范例、标签、对外形象、状态)
+- `scripts/seed_users.py` 导入(幂等)/`--purge`/`--count`;统一口令见上表;不跑 LLM,不花 token
+- `is_seed` 用户:可登录、可搜索、可聊;裁判与私信返回 400「TA 还没开放真人对话」,资料页 `accepts_real_chat=false`,客户端隐藏裁判入口
+- 通过 Actions 导入:提交信息 `[deploy] [task:seed-users]` → 部署完在服务器跑 `deploy/task.sh seed-users`
+
+**其他**
+- `scripts/reset_password.py`:重置任意账号密码(哈希不可逆)
+- 测试增至 16 个(搜索/推荐/标签提炼/种子导入与边界/100 份资料格式校验)
+- `APP_VERSION` v4.1
 
 ### v4.0 · 2026-11-03 · 前端重做 + 对外形象
 

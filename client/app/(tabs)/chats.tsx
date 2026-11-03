@@ -1,6 +1,14 @@
 import { Redirect, router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/ui/avatar';
@@ -11,27 +19,18 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { LargeHeader, SectionLabel } from '@/components/ui/large-header';
 import { Pill } from '@/components/ui/pill';
-import { ActionSheet } from '@/components/ui/sheet';
-import { Type } from '@/constants/theme';
+import { TextField } from '@/components/ui/text-field';
+import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
+import { formatRecent } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
-import { kvGet, kvSet } from '@/lib/kv';
-import type { UserSummary } from '@/lib/types';
+import type { TagCount, UserSummary } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
 import { useProfileStore } from '@/stores/profile-store';
 
-// 置顶的用户 id 列表(仅本机;长按行切换)
-const PIN_KEY = 'agentdiary_chat_pins';
-
-async function loadPins(): Promise<string[]> {
-  try {
-    const raw = await kvGet(PIN_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  } catch {
-    return [];
-  }
-}
+// 发现页不再罗列全站用户:找具体的人靠搜索,认识新人靠推荐(标签重合 + 活跃度,
+// 带可验证的理由),名人化身固定垫底做门面。
 
 function openChat(user: UserSummary) {
   router.push({
@@ -46,35 +45,30 @@ function openChat(user: UserSummary) {
 }
 
 function metaLine(user: UserSummary): string {
-  if (user.is_builtin) return '名人化身 · 由人物设定驱动';
+  if (user.is_builtin) return '名人化身';
   if (user.card_count > 0) return `${user.card_count} 张人格卡片`;
   return '化身尚未喂养';
 }
 
-function hintLine(user: UserSummary): string {
-  if (user.status) return `今日:${user.status}`;
-  if (user.persona_excerpt) return user.persona_excerpt;
-  return '去和 TA 的化身聊聊';
-}
-
-function UserRow({
+function PersonRow({
   user,
-  pinned,
-  onLongPress,
+  hint,
+  hintIcon,
+  hintTint = false,
+  showTags = false,
+  trailing,
 }: {
   user: UserSummary;
-  pinned: boolean;
-  onLongPress: () => void;
+  hint?: string | null;
+  hintIcon?: 'sparkles' | 'bubble.left.fill' | 'face.smiling';
+  hintTint?: boolean;
+  showTags?: boolean;
+  trailing?: string | null;
 }) {
   const { colors } = useTheme();
   return (
     <Pressable
       onPress={() => openChat(user)}
-      onLongPress={() => {
-        haptic.medium();
-        onLongPress();
-      }}
-      delayLongPress={320}
       style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.fill }]}>
       <Avatar username={user.username} userId={user.id} avatarTs={user.avatar_updated_at} size={50} />
       <View style={styles.rowBody}>
@@ -82,30 +76,43 @@ function UserRow({
           <Text style={[Type.headline, styles.rowName, { color: colors.text }]} numberOfLines={1}>
             {user.username}
           </Text>
-          {pinned && <IconSymbol name="pin.fill" size={12} color={colors.textTertiary} />}
           <Text style={[Type.caption1, { color: colors.textTertiary }]} numberOfLines={1}>
-            {metaLine(user)}
+            {trailing ?? metaLine(user)}
           </Text>
         </View>
-        <Text
-          style={[Type.subhead, { color: user.status ? colors.tint : colors.textSecondary }]}
-          numberOfLines={1}>
-          {hintLine(user)}
-        </Text>
+        {hint ? (
+          <View style={styles.hintRow}>
+            {hintIcon && (
+              <IconSymbol name={hintIcon} size={12} color={hintTint ? colors.tint : colors.textTertiary} />
+            )}
+            <Text
+              style={[Type.subhead, styles.hintText, { color: hintTint ? colors.tint : colors.textSecondary }]}
+              numberOfLines={1}>
+              {hint}
+            </Text>
+          </View>
+        ) : null}
+        {showTags && user.tags.length > 0 && (
+          <View style={styles.tags}>
+            {user.tags.slice(0, 3).map((t) => (
+              <Pill key={t} label={t} tone="neutral" />
+            ))}
+          </View>
+        )}
       </View>
       <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
     </Pressable>
   );
 }
 
-function RowGroup({ users, pins, onLongPress }: { users: UserSummary[]; pins: string[]; onLongPress: (u: UserSummary) => void }) {
+function RowGroup({ children }: { children: React.ReactNode[] }) {
   const { colors } = useTheme();
   return (
     <Card padded={false} style={styles.group}>
-      {users.map((u, i) => (
-        <View key={u.id}>
+      {children.map((child, i) => (
+        <View key={i}>
           {i > 0 && <View style={[styles.separator, { backgroundColor: colors.separator }]} />}
-          <UserRow user={u} pinned={pins.includes(u.id)} onLongPress={() => onLongPress(u)} />
+          {child}
         </View>
       ))}
     </Card>
@@ -125,55 +132,94 @@ function Chats() {
   const { colors } = useTheme();
   const { username, userId, avatarTs } = useAuthStore();
   const { persona, cardCount, refresh: refreshProfile } = useProfileStore();
-  const [users, setUsers] = useState<UserSummary[]>([]);
-  const [pins, setPins] = useState<string[]>([]);
+
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<UserSummary[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  const [recent, setRecent] = useState<UserSummary[]>([]);
+  const [celebrities, setCelebrities] = useState<UserSummary[]>([]);
+  const [tags, setTags] = useState<TagCount[]>([]);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [seed, setSeed] = useState(0);
+  const [recommended, setRecommended] = useState<UserSummary[]>([]);
+  const [recLoading, setRecLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [actionUser, setActionUser] = useState<UserSummary | null>(null);
+
+  const loadRecommended = useCallback(async (tag: string | null, s: number) => {
+    setRecLoading(true);
+    try {
+      setRecommended(await api.recommendedUsers({ limit: 8, tag, seed: s }));
+    } catch {
+      // 推荐失败不打断页面,其他分区照常
+    } finally {
+      setRecLoading(false);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [list, savedPins] = await Promise.all([api.listUsers(), loadPins()]);
-      setUsers(list);
-      setPins(savedPins.filter((id) => list.some((u) => u.id === id)));
+      const [contacts, recentList, tagList] = await Promise.all([
+        api.listUsers(),
+        api.recentContacts(),
+        api.listTags(),
+      ]);
+      setCelebrities(contacts.filter((u) => u.is_builtin));
+      setRecent(recentList);
+      setTags(tagList);
       setError(null);
+      await loadRecommended(activeTag, seed);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
       setLoaded(true);
     }
-  }, []);
+  }, [activeTag, seed, loadRecommended]);
 
   useFocusEffect(
     useCallback(() => {
       refresh();
       refreshProfile(userId).catch(() => {});
-    }, [refresh, refreshProfile, userId]),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId]),
   );
 
-  const togglePin = useCallback((id: string) => {
-    setPins((prev) => {
-      const next = prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id];
-      kvSet(PIN_KEY, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  }, []);
+  // 搜索:去抖 280ms;空查询回到发现页
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const timer = setTimeout(() => {
+      api
+        .searchUsers(q)
+        .then(setResults)
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 280);
+    return () => clearTimeout(timer);
+  }, [query]);
 
-  const pinnedUsers = useMemo(
-    () => pins.map((id) => users.find((u) => u.id === id)).filter((u): u is UserSummary => !!u),
-    [pins, users],
-  );
-  const people = useMemo(
-    () => users.filter((u) => !u.is_builtin && !pins.includes(u.id)),
-    [users, pins],
-  );
-  const celebrities = useMemo(
-    () => users.filter((u) => u.is_builtin && !pins.includes(u.id)),
-    [users, pins],
-  );
+  const pickTag = (tag: string | null) => {
+    haptic.selection();
+    setActiveTag(tag);
+    setSeed(0);
+    loadRecommended(tag, 0);
+  };
+
+  const shuffle = () => {
+    haptic.light();
+    const next = seed + 1;
+    setSeed(next);
+    loadRecommended(activeTag, next);
+  };
 
   const openSelf = () =>
     router.push({
@@ -181,10 +227,13 @@ function Chats() {
       params: { userId: userId ?? '', username: username ?? '', builtin: '', avatarTs: avatarTs ?? '' },
     });
 
+  const isSearching = query.trim().length > 0;
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.textSecondary} />}>
         <LargeHeader
@@ -199,79 +248,160 @@ function Chats() {
           }
         />
 
-        {/* 我的化身:固定在最上面 */}
-        <Card onPress={openSelf} style={styles.selfCard}>
-          <View style={styles.selfTop}>
-            <Avatar username={username ?? '我'} userId={userId} avatarTs={avatarTs} size={54} />
-            <View style={styles.rowBody}>
-              <Text style={[Type.headline, { color: colors.text }]}>我的化身</Text>
-              <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
-                由你的日记喂养{cardCount ? ` · ${cardCount} 张人格卡片` : ' · 还没有人格卡片'}
-              </Text>
+        <View style={styles.search}>
+          <TextField
+            icon="magnifyingglass"
+            placeholder="搜索用户名…"
+            value={query}
+            onChangeText={setQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            right={
+              searching ? (
+                <ActivityIndicator size="small" color={colors.textTertiary} />
+              ) : query ? (
+                <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="清除">
+                  <IconSymbol name="xmark.circle.fill" size={18} color={colors.textTertiary} />
+                </Pressable>
+              ) : undefined
+            }
+          />
+        </View>
+
+        {isSearching ? (
+          results.length > 0 ? (
+            <>
+              <SectionLabel>搜索结果</SectionLabel>
+              <RowGroup>
+                {results.map((u) => (
+                  <PersonRow key={u.id} user={u} hint={u.status ? `今日:${u.status}` : u.persona_excerpt} showTags />
+                ))}
+              </RowGroup>
+            </>
+          ) : !searching ? (
+            <EmptyState icon="magnifyingglass" title={`没有叫「${query.trim()}」的人`} message="试试完整的用户名,或者看看下面的推荐。" />
+          ) : null
+        ) : (
+          <>
+            {/* 我的化身 */}
+            <Card onPress={openSelf} style={styles.selfCard}>
+              <View style={styles.selfTop}>
+                <Avatar username={username ?? '我'} userId={userId} avatarTs={avatarTs} size={54} />
+                <View style={styles.rowBody}>
+                  <Text style={[Type.headline, { color: colors.text }]}>我的化身</Text>
+                  <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
+                    由你的日记喂养{cardCount ? ` · ${cardCount} 张人格卡片` : ' · 还没有人格卡片'}
+                  </Text>
+                </View>
+                <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
+              </View>
+              <View style={[styles.selfFooter, { borderTopColor: colors.separator }]}>
+                <Pill
+                  label={persona ? '对外形象已设置' : '还没写对外形象'}
+                  tone={persona ? 'tint' : 'warning'}
+                  icon="person.text.rectangle.fill"
+                />
+                <Button
+                  title={persona ? '编辑' : '去写一段'}
+                  variant="ghost"
+                  size="sm"
+                  onPress={() => router.push('/persona-editor')}
+                  style={styles.selfAction}
+                />
+              </View>
+            </Card>
+
+            {error && <Banner tone="danger" message={error} actionLabel="重试" onAction={refresh} style={styles.banner} />}
+
+            {recent.length > 0 && (
+              <>
+                <SectionLabel>最近对话</SectionLabel>
+                <RowGroup>
+                  {recent.map((u) => (
+                    <PersonRow
+                      key={u.id}
+                      user={u}
+                      hint={u.last_message}
+                      hintIcon="bubble.left.fill"
+                      trailing={u.last_at ? formatRecent(u.last_at) : null}
+                    />
+                  ))}
+                </RowGroup>
+              </>
+            )}
+
+            {/* 为你推荐 */}
+            <View style={styles.recHeader}>
+              <SectionLabel style={styles.recLabel}>为你推荐</SectionLabel>
+              <Button
+                title="换一批"
+                variant="ghost"
+                size="sm"
+                icon="arrow.triangle.2.circlepath"
+                onPress={shuffle}
+                disabled={recLoading}
+                style={styles.shuffle}
+              />
             </View>
-            <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
-          </View>
-          <View style={[styles.selfFooter, { borderTopColor: colors.separator }]}>
-            <Pill
-              label={persona ? '对外形象已设置' : '还没写对外形象'}
-              tone={persona ? 'tint' : 'warning'}
-              icon="person.text.rectangle.fill"
-            />
-            <Button
-              title={persona ? '编辑' : '去写一段'}
-              variant="ghost"
-              size="sm"
-              onPress={() => router.push('/persona-editor')}
-              style={styles.selfAction}
-            />
-          </View>
-        </Card>
+            {tags.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagBar}>
+                {[{ tag: '全部', count: 0 }, ...tags].map((t, i) => {
+                  const value = i === 0 ? null : t.tag;
+                  const active = activeTag === value;
+                  return (
+                    <Pressable
+                      key={t.tag}
+                      onPress={() => pickTag(value)}
+                      style={({ pressed }) => [
+                        styles.tagChip,
+                        {
+                          backgroundColor: active ? colors.tint : colors.surface,
+                          borderColor: active ? colors.tint : colors.separator,
+                          opacity: pressed ? 0.75 : 1,
+                        },
+                      ]}>
+                      <Text style={[Type.footnote, { color: active ? colors.onTint : colors.text, fontWeight: '600' }]}>
+                        {t.tag}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+            {recLoading && recommended.length === 0 ? (
+              <View style={styles.recLoading}>
+                <ActivityIndicator color={colors.textTertiary} />
+              </View>
+            ) : recommended.length > 0 ? (
+              <RowGroup>
+                {recommended.map((u) => (
+                  <PersonRow key={u.id} user={u} hint={u.reason} hintIcon="sparkles" hintTint showTags />
+                ))}
+              </RowGroup>
+            ) : loaded ? (
+              <Card tone="fill" style={styles.recEmpty}>
+                <Text style={[Type.footnote, { color: colors.textSecondary }]}>
+                  {activeTag
+                    ? `还没有带「${activeTag}」标签的人。`
+                    : '还没有可以推荐的人。多写几篇日记、填上对外形象,推荐会更准。'}
+                </Text>
+              </Card>
+            ) : null}
 
-        {error && <Banner tone="danger" message={error} actionLabel="重试" onAction={refresh} style={styles.banner} />}
-
-        {pinnedUsers.length > 0 && (
-          <>
-            <SectionLabel>置顶</SectionLabel>
-            <RowGroup users={pinnedUsers} pins={pins} onLongPress={setActionUser} />
+            {celebrities.length > 0 && (
+              <>
+                <SectionLabel>名人化身</SectionLabel>
+                <RowGroup>
+                  {celebrities.map((u) => (
+                    <PersonRow key={u.id} user={u} hint="由人物设定驱动,随便聊聊" />
+                  ))}
+                </RowGroup>
+              </>
+            )}
           </>
-        )}
-
-        {people.length > 0 && (
-          <>
-            <SectionLabel>化身</SectionLabel>
-            <RowGroup users={people} pins={pins} onLongPress={setActionUser} />
-          </>
-        )}
-
-        {celebrities.length > 0 && (
-          <>
-            <SectionLabel>名人化身</SectionLabel>
-            <RowGroup users={celebrities} pins={pins} onLongPress={setActionUser} />
-          </>
-        )}
-
-        {loaded && users.length === 0 && !error && (
-          <EmptyState icon="person.2.fill" title="还没有其他用户" message="等朋友也来写日记,这里就会出现 TA 的化身。" />
         )}
       </ScrollView>
-
-      <ActionSheet
-        visible={actionUser !== null}
-        onClose={() => setActionUser(null)}
-        title={actionUser?.username}
-        actions={
-          actionUser
-            ? [
-                {
-                  label: pins.includes(actionUser.id) ? '取消置顶' : '置顶',
-                  icon: pins.includes(actionUser.id) ? 'pin.slash.fill' : 'pin.fill',
-                  onPress: () => togglePin(actionUser.id),
-                },
-                { label: '打开对话', icon: 'bubble.left.fill', onPress: () => openChat(actionUser) },
-              ]
-            : []
-        }
-      />
     </View>
   );
 }
@@ -279,7 +409,8 @@ function Chats() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { paddingBottom: 32 },
-  selfCard: { marginHorizontal: 20, marginTop: 6, marginBottom: 20, padding: 0 },
+  search: { paddingHorizontal: 20, marginBottom: 14 },
+  selfCard: { marginHorizontal: 20, marginBottom: 20, padding: 0 },
   selfTop: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
   selfFooter: {
     flexDirection: 'row',
@@ -294,7 +425,22 @@ const styles = StyleSheet.create({
   group: { marginHorizontal: 20, marginBottom: 20 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12 },
   rowBody: { flex: 1, gap: 3 },
-  rowTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   rowName: { flexShrink: 1 },
+  hintRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  hintText: { flex: 1 },
+  tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
   separator: { height: StyleSheet.hairlineWidth, marginLeft: 80 },
+  recHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 12 },
+  recLabel: { marginBottom: 6 },
+  shuffle: { paddingHorizontal: 8 },
+  tagBar: { paddingHorizontal: 20, gap: 8, paddingBottom: 12, paddingTop: 2 },
+  tagChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  recLoading: { paddingVertical: 28, alignItems: 'center' },
+  recEmpty: { marginHorizontal: 20, marginBottom: 20 },
 });

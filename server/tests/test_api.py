@@ -49,9 +49,9 @@ def test_persona_roundtrip_and_validation(client):
     too_long = client.put("/users/me/persona", json={"persona": "啊" * 601}, headers=h)
     assert too_long.status_code == 422
 
-    # 别人在列表里看到单行摘要,在资料页看到全文
+    # 别人搜到我时看到单行摘要,在资料页看到全文(/users 不再罗列陌生人)
     other = register(client, _name("o"))
-    users = client.get("/users", headers=auth(other["token"])).json()
+    users = client.get(f"/users/search?q={me['username']}", headers=auth(other["token"])).json()
     mine = next(u for u in users if u["id"] == me["user_id"])
     assert mine["persona_excerpt"] == "我是个话少但认真的人。 别聊星座。"
     profile = client.get(f"/users/{me['user_id']}/profile", headers=auth(other["token"])).json()

@@ -36,8 +36,8 @@ def _resolve_peer(user_id: str, me: User, session: Session) -> User:
     peer = session.get(User, user_id)
     if peer is None or peer.id == me.id:
         raise HTTPException(status_code=404, detail="用户不存在")
-    if peer.is_builtin:
-        raise HTTPException(status_code=400, detail="名人化身没有真人对话")
+    if peer.is_builtin or peer.is_seed:
+        raise HTTPException(status_code=400, detail="TA 还没开放真人对话")
     if not pair_unlocked(session, me.id, peer.id):
         raise HTTPException(
             status_code=403, detail="真人对话未解锁:先和 TA 的化身聊,再请 AI 裁判评估"

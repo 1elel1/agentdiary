@@ -126,6 +126,8 @@ def _resolve_target(target_user_id: str, me: User, session: Session) -> User:
         raise HTTPException(status_code=400, detail="不能评估和自己化身的对话")
     if owner.is_builtin:
         raise HTTPException(status_code=400, detail="名人化身没有真人可解锁")
+    if owner.is_seed:
+        raise HTTPException(status_code=400, detail="TA 还没开放真人对话")
     return owner
 
 

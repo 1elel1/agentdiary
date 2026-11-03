@@ -3,11 +3,12 @@
 import base64
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlmodel import Session, func, select
+from sqlmodel import Session, func, or_, select
 
+from .. import recommend as rec
 from ..auth import get_current_user, hash_password, verify_password
 from ..config import AVATAR_DIR
 from ..db import get_session
@@ -61,16 +62,6 @@ def persona_excerpt(user: User) -> str | None:
     return one_line[: PERSONA_EXCERPT_CHARS - 1].rstrip() + "…"
 
 
-def _card_counts(session: Session) -> dict[str, int]:
-    """每个用户的有效卡片数,一条 GROUP BY 查完(原来是每用户一次 COUNT)。"""
-    rows = session.exec(
-        select(PersonaCard.user_id, func.count())
-        .where(PersonaCard.superseded_by == None)  # noqa: E711
-        .group_by(PersonaCard.user_id)
-    ).all()
-    return {user_id: int(count) for user_id, count in rows}
-
-
 class UserSummary(BaseModel):
     id: str
     username: str
@@ -79,6 +70,10 @@ class UserSummary(BaseModel):
     status: str | None  # 当前有效状态
     avatar_updated_at: datetime | None  # 有值 = 有自定义头像,兼作缓存指纹
     persona_excerpt: str | None = None  # 对外形象首行摘要;None = 还没写
+    tags: list[str] = []  # 兴趣标签(LLM 提炼或种子给定)
+    reason: str | None = None  # 推荐理由;只有推荐接口会填
+    last_message: str | None = None  # 最近对话预览;只有「最近对话」接口会填
+    last_at: datetime | None = None
 
 
 class UserProfile(BaseModel):
@@ -91,6 +86,23 @@ class UserProfile(BaseModel):
     status: str | None
     persona: str | None
     avatar_updated_at: datetime | None
+    tags: list[str] = []
+    # 是否可能解锁真人对话:名人化身与种子账号背后没有真人,客户端据此隐藏裁判入口
+    accepts_real_chat: bool = True
+
+
+def _summary(user: User, counts: dict[str, int], **extra) -> UserSummary:
+    return UserSummary(
+        id=user.id,
+        username=user.username,
+        card_count=counts.get(user.id, 0),
+        is_builtin=user.is_builtin,
+        status=current_status(user),
+        avatar_updated_at=user.avatar_updated_at,
+        persona_excerpt=persona_excerpt(user),
+        tags=rec.parse_tags(user.tags_json),
+        **extra,
+    )
 
 
 class StatusUpdate(BaseModel):
@@ -136,6 +148,7 @@ def get_my_persona(me: User = Depends(get_current_user)) -> PersonaOut:
 @router.put("/me/persona")
 def set_persona(
     body: PersonaUpdate,
+    background_tasks: BackgroundTasks,
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> PersonaOut:
@@ -154,6 +167,8 @@ def set_persona(
     me.persona_updated_at = datetime.now(timezone.utc) if text else None
     session.add(me)
     session.commit()
+    # 对外形象变了,兴趣标签跟着重提炼(后台,失败不影响保存)
+    background_tasks.add_task(rec.refresh_user_tags_by_id, me.id)
     return PersonaOut(persona=me.public_persona, updated_at=me.persona_updated_at)
 
 
@@ -332,26 +347,128 @@ def get_profile(
         status=current_status(user),
         persona=user.public_persona,
         avatar_updated_at=user.avatar_updated_at,
+        tags=rec.parse_tags(user.tags_json),
+        accepts_real_chat=not (user.is_builtin or user.is_seed),
     )
+
+
+MAX_SEARCH = 20
+
+
+@router.get("/search")
+def search_users(
+    q: str = "",
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[UserSummary]:
+    """按用户名搜索(不分大小写的包含匹配),最多 20 条。发现页不再罗列全员,
+    想找具体的人就搜;空查询返回空。"""
+    q = q.strip()
+    if not q:
+        return []
+    if len(q) > 20:
+        raise HTTPException(status_code=422, detail="关键词太长")
+    check_rate_limit(f"usearch:{me.id}", max_calls=120, window_seconds=3600)
+    counts = rec.card_counts(session)
+    pattern = f"%{q.lower()}%"
+    rows = session.exec(
+        select(User)
+        .where(User.id != me.id)
+        .where(func.lower(User.username).like(pattern))
+        .order_by(User.username)
+        .limit(MAX_SEARCH)
+    )
+    result = [_summary(u, counts) for u in rows]
+    # 名字开头就命中的排前面
+    result.sort(key=lambda u: (not u.username.lower().startswith(q.lower()), u.is_builtin, u.username))
+    return result
+
+
+@router.get("/recommended")
+def recommended_users(
+    limit: int = 8,
+    tag: str | None = None,
+    seed: int = 0,
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[UserSummary]:
+    """为你推荐:按兴趣标签重合 + 资料完整度 + 活跃度打分,带可验证的推荐理由。
+    seed 换一批;tag 只看带该标签的人。"""
+    limit = max(1, min(limit, 20))
+    counts = rec.card_counts(session)
+    picked = rec.recommend(session, me, limit=limit, tag=(tag or "").strip() or None, seed=seed)
+    return [_summary(u, counts, reason=reason) for u, _score, reason, _tags, _cards in picked]
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+@router.get("/tags")
+def tags(
+    me: User = Depends(get_current_user), session: Session = Depends(get_session)
+) -> list[TagCount]:
+    """筛选条用的热门标签。"""
+    return [TagCount(tag=t, count=n) for t, n in rec.popular_tags(session)]
+
+
+@router.get("/recent")
+def recent_contacts(
+    limit: int = 20,
+    me: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> list[UserSummary]:
+    """最近和哪些化身聊过(按最后一条消息时间),带最后一句预览。"""
+    limit = max(1, min(limit, 50))
+    rows = session.exec(
+        select(ChatMessage.agent_owner_id, func.max(ChatMessage.created_at))
+        .where(ChatMessage.visitor_id == me.id)
+        .where(ChatMessage.agent_owner_id != me.id)
+        .group_by(ChatMessage.agent_owner_id)
+        .order_by(func.max(ChatMessage.created_at).desc())
+        .limit(limit)
+    ).all()
+    counts = rec.card_counts(session)
+    out: list[UserSummary] = []
+    for owner_id, last_at in rows:
+        owner = session.get(User, owner_id)
+        if owner is None:
+            continue
+        last = session.exec(
+            select(ChatMessage)
+            .where(ChatMessage.agent_owner_id == owner_id)
+            .where(ChatMessage.visitor_id == me.id)
+            .order_by(ChatMessage.created_at.desc())  # type: ignore[attr-defined]
+            .limit(1)
+        ).first()
+        out.append(
+            _summary(
+                owner,
+                counts,
+                last_message=last.content if last else None,
+                last_at=last_at,
+            )
+        )
+    return out
 
 
 @router.get("")
 def list_users(
     me: User = Depends(get_current_user), session: Session = Depends(get_session)
 ) -> list[UserSummary]:
-    counts = _card_counts(session)
-    result = [
-        UserSummary(
-            id=user.id,
-            username=user.username,
-            card_count=counts.get(user.id, 0),
-            is_builtin=user.is_builtin,
-            status=current_status(user),
-            avatar_updated_at=user.avatar_updated_at,
-            persona_excerpt=persona_excerpt(user),
+    """发现页的「门面」:只返回名人化身和我聊过的人,不再罗列全站用户
+    (隐私:注册即被所有人看到不合理;找人走搜索,认识新人走推荐)。"""
+    counts = rec.card_counts(session)
+    talked = {
+        row
+        for row in session.exec(
+            select(ChatMessage.agent_owner_id).where(ChatMessage.visitor_id == me.id).distinct()
         )
-        for user in session.exec(select(User).where(User.id != me.id))
-    ]
-    # 名人化身排在最前,给冷启动的发现页一个门面
+    }
+    rows = session.exec(
+        select(User).where(User.id != me.id).where(or_(User.is_builtin == True, User.id.in_(talked)))  # noqa: E712
+    )
+    result = [_summary(u, counts) for u in rows]
     result.sort(key=lambda u: (not u.is_builtin, u.username))
     return result

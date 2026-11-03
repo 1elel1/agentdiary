@@ -51,7 +51,7 @@ jobs:
     # 分支 push 只在提交信息带 [deploy] 时真正部署;标签与手动触发总是部署
     if: ${{ github.event_name != 'push' || startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, '[deploy]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: 检查 secret
         env:
@@ -147,3 +147,17 @@ jobs:
         run: |
           curl -fsS "${PUBLIC_URL}/health"; echo
           curl -fsS -o /dev/null -w 'web /login → HTTP %{http_code}\n' "${PUBLIC_URL}/login"
+
+      # 提交信息里带 [task:xxx] 时,部署完在服务器上跑对应运维任务(见 deploy/task.sh 的允许列表)。
+      # 例:[deploy] [task:seed-users]。日志公开,任务只打印数量。
+      - name: 部署后任务
+        if: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          tasks=$(grep -o '\[task:[a-z0-9-]*\]' <<<"$COMMIT_MSG" | sed 's/\[task:\(.*\)\]/\1/' | sort -u || true)
+          if [ -z "$tasks" ]; then echo "没有附带任务"; exit 0; fi
+          for t in $tasks; do
+            echo "== 任务: $t"
+            ssh server "cd ${REPO_DIR} && bash deploy/task.sh $t"
+          done

@@ -74,6 +74,13 @@ git tag deploy-v4.0.0 && git push origin deploy-v4.0.0   # 或推一个 deploy-*
 改动时中止并列出、不覆盖;若不是 git 仓库(**当前服务器就是这种情况**,代码当初是直接传上去的),
 就用 rsync 同步源码,保留 `server/.venv`、数据库、头像和日志。部署的提交号记在 `.deployed-commit`。
 
+## 部署后任务(task.sh)
+
+提交信息里带 `[task:xxx]`,工作流部署完会在服务器上跑 `deploy/task.sh xxx`。允许的任务:
+`seed-users`(导入种子用户,幂等)、`purge-seed-users`、`seed-count`。日志公开,任务只打印数量。
+手动跑:`cd /home/ubuntu/agentdiary && bash deploy/task.sh seed-count`。
+它用 `sudo cat` 读 `/etc/agentdiary.env` 取数据目录,命令本身以 ubuntu 身份执行。
+
 ## 数据库备份
 
 ```bash

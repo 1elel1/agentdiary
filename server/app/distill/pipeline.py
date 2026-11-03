@@ -15,7 +15,8 @@ from sqlmodel import Session
 from .. import llm
 from ..config import DATA_DIR
 from ..db import engine
-from ..models import DialoguePair, DiaryEntry, PersonaCard
+from ..models import DialoguePair, DiaryEntry, PersonaCard, User
+from ..recommend import refresh_user_tags
 from .privacy import sanitize
 
 logger = logging.getLogger(__name__)
@@ -138,3 +139,7 @@ def run_pipeline_for_diary(diary_id: str) -> None:
                 session.add(card)
             session.commit()
             logger.info("卡片入库 %d 张 diary=%s", len(cards), diary_id)
+            # 卡片变了,发现页用的兴趣标签跟着重提炼(失败只记日志)
+            user = session.get(User, diary.user_id)
+            if user is not None:
+                _attempt(f"标签提炼 user={user.id}", lambda: refresh_user_tags(session, user))
