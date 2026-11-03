@@ -24,8 +24,10 @@ if [ -r /etc/agentdiary.env ] || sudo -n test -r /etc/agentdiary.env 2>/dev/null
   set +a
 fi
 
-PY=server/.venv/bin/python
 cd server
+# 用绝对路径:上面已经 cd 进 server,相对路径会变成 server/server/...
+PY="$(pwd)/.venv/bin/python"
+[ -x "$PY" ] || { echo "找不到 $PY(先跑过一次部署才有 venv)" >&2; exit 1; }
 case "$TASK" in
   seed-users)        $PY scripts/seed_users.py ;;
   purge-seed-users)  $PY scripts/seed_users.py --purge ;;
