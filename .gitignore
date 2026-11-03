@@ -21,3 +21,6 @@ client/.env
 # 杂项
 *.log
 Thumbs.db
+
+# GitHub Actions rsync 部署时写在服务器上的提交标记
+.deployed-commit

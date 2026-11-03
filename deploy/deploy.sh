@@ -24,14 +24,21 @@ log() { printf '\n\033[1;34m[deploy]\033[0m %s\n' "$*"; }
 cd "$REPO_DIR"
 
 if [ "${NO_GIT:-0}" = "1" ]; then
-  log "NO_GIT=1,使用工作区现有代码"
+  log "NO_GIT=1,使用目录里现有的代码"
+elif ! git rev-parse --git-dir >/dev/null 2>&1; then
+  echo "[deploy] $REPO_DIR 不是 git 仓库,拉不了代码。用 GitHub Actions 部署,或 NO_GIT=1 跳过拉取。" >&2
+  exit 1
 else
   log "拉取 origin/$BRANCH"
   git fetch origin "$BRANCH"
   git checkout -q "$BRANCH"
   git pull --ff-only origin "$BRANCH"
 fi
-log "当前提交:$(git log -1 --format='%h %s')"
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  log "当前提交:$(git log -1 --format='%h %s')"
+elif [ -f .deployed-commit ]; then
+  log "当前提交:$(cut -c1-8 .deployed-commit)(由 GitHub Actions rsync 部署)"
+fi
 
 log "后端依赖 + 测试"
 if [ ! -x server/.venv/bin/python ]; then

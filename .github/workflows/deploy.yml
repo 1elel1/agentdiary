@@ -16,9 +16,9 @@ name: Deploy to server
 #   2. 推一个 deploy-* 标签:git tag deploy-v4.0.0 && git push origin deploy-v4.0.0
 #   3. 工作流进了 main 之后,Actions → Deploy to server → Run workflow 选分支
 #
-# 对服务器的要求:ubuntu 用户可免密 sudo(Lighthouse 默认如此);仓库在 /home/ubuntu/agentdiary。
-# 部署会把服务器仓库的同名分支强制指到本次提交(GitHub 是唯一事实来源),
-# 服务器上有未提交改动时会中止并列出,不会覆盖。
+# 对服务器的要求:ubuntu 用户可免密 sudo(Lighthouse 默认如此);代码在 /home/ubuntu/agentdiary。
+# 该目录若是 git 仓库,就把同名分支强制指到本次提交(有未提交改动时中止并列出,不覆盖);
+# 若不是(当前服务器就是直接传上去的目录),则 rsync 同步源码,保留 .venv、数据库、头像、日志。
 
 on:
   push:
@@ -110,14 +110,28 @@ jobs:
           } > ~/.ssh/config
           ssh server 'echo "ssh ok: $(hostname)"; command -v rsync >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq rsync)'
 
-      - name: 把代码推到服务器仓库
+      - name: 把代码放到服务器
         run: |
           # 标签触发时服务器上统一落在 deploy 分支;分支 push / 手动触发时用分支名
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then BRANCH="deploy"; else BRANCH="${GITHUB_REF_NAME}"; fi
-          echo "服务器分支:${BRANCH}(来源 ${GITHUB_REF_TYPE} ${GITHUB_REF_NAME} @ ${GITHUB_SHA::8})"
-          ssh server "cd ${REPO_DIR} && if ! git diff --quiet || ! git diff --cached --quiet; then echo '::error::服务器仓库有未提交的改动,先在服务器上处理掉再部署:'; git status --short; exit 1; fi"
-          git push --force "server:${REPO_DIR}" "HEAD:refs/remotes/ci/${BRANCH}"
-          ssh server "cd ${REPO_DIR} && git checkout -q -B '${BRANCH}' 'ci/${BRANCH}' && echo \"服务器现在在:\$(git log -1 --format='%h %s')\""
+          echo "${GITHUB_SHA}" > .deployed-commit
+          if ssh server "test -d ${REPO_DIR}/.git"; then
+            echo "服务器目录是 git 仓库:推送并切到 ${BRANCH} @ ${GITHUB_SHA::8}"
+            ssh server "cd ${REPO_DIR} && if ! git diff --quiet || ! git diff --cached --quiet; then echo '::error::服务器仓库有未提交的改动,先在服务器上处理掉再部署:'; git status --short; exit 1; fi"
+            git push --force "server:${REPO_DIR}" "HEAD:refs/remotes/ci/${BRANCH}"
+            ssh server "cd ${REPO_DIR} && git checkout -q -B '${BRANCH}' 'ci/${BRANCH}' && echo \"服务器现在在:\$(git log -1 --format='%h %s')\""
+            scp -q .deployed-commit "server:${REPO_DIR}/.deployed-commit"
+          else
+            echo "服务器目录不是 git 仓库:rsync 同步源码 @ ${GITHUB_SHA::8}(保留 .venv / 数据库 / 头像 / 日志,不动 node_modules)"
+            ssh server "mkdir -p ${REPO_DIR}"
+            rsync -az --delete \
+              --exclude '.git' \
+              --exclude 'client/node_modules' --exclude 'client/dist' --exclude 'client/.expo' \
+              --exclude 'server/.venv' --exclude 'server/*.db' --exclude 'server/*.db-*' --exclude 'server/avatars' --exclude 'server/*.log' \
+              --exclude '__pycache__' --exclude '*.pyc' \
+              --exclude 'utils/node' --exclude 'utils/npm-global' --exclude 'utils/npm-cache' \
+              ./ "server:${REPO_DIR}/"
+          fi
 
       - name: 上传网页版
         if: ${{ !inputs.skip_web }}

@@ -110,11 +110,12 @@ sudo journalctl -u agentdiary-api -n 100 --no-pager
    或工作流进 main 后在 Actions 页点 Run workflow
 3. 绿了就去 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象
 
-**B. 登服务器手动跑**
+**B. 登服务器手动跑**(注意:服务器上的 `/home/ubuntu/agentdiary` **不是 git 仓库**,当初是直接传上去的目录,
+所以 `deploy.sh` 的 git 拉取模式在那里用不了;要么走 A,要么自己把代码传上去后 `NO_GIT=1 bash deploy/deploy.sh`)
 
 ```bash
 ssh agentdiary
-cd /home/ubuntu/agentdiary && bash deploy/deploy.sh claude/brave-volta-zbr8b5   # 先在分支上验
+cd /home/ubuntu/agentdiary && NO_GIT=1 bash deploy/deploy.sh
 ```
 
 验完合进 main 并发 App 端 OTA:
