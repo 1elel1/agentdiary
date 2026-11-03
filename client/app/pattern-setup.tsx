@@ -11,6 +11,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
 type Step = 'verify' | 'draw' | 'confirm';
@@ -18,6 +19,7 @@ type Step = 'verify' | 'draw' | 'confirm';
 export default function PatternSetupScreen() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
   const { colors } = useTheme();
+  const t = useT();
   const disable = mode === 'disable';
   const { lockPattern, setLockPattern } = useSettingsStore();
 
@@ -25,19 +27,14 @@ export default function PatternSetupScreen() {
   const [firstDraw, setFirstDraw] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const hint =
-    step === 'verify'
-      ? '先绘制当前图案验证身份'
-      : step === 'draw'
-        ? '绘制新图案(至少连 4 个点)'
-        : '再绘制一次确认';
+  const hint = step === 'verify' ? t.pattern.verify : step === 'draw' ? t.pattern.draw : t.pattern.confirm;
 
   const onComplete = async (pattern: string) => {
     setError(null);
     if (step === 'verify') {
       if (pattern !== lockPattern) {
         haptic.error();
-        setError('图案不对,再试一次');
+        setError(t.pattern.wrong);
         return;
       }
       if (disable) {
@@ -57,7 +54,7 @@ export default function PatternSetupScreen() {
     }
     if (pattern !== firstDraw) {
       haptic.error();
-      setError('两次图案不一致,请重新绘制');
+      setError(t.pattern.mismatch);
       setFirstDraw(null);
       setStep('draw');
       return;
@@ -71,8 +68,8 @@ export default function PatternSetupScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: disable ? '关闭手势锁' : '设置手势锁',
-          headerLeft: () => <HeaderButton title="取消" onPress={() => router.back()} />,
+          title: disable ? t.pattern.disableTitle : t.pattern.setTitle,
+          headerLeft: () => <HeaderButton title={t.common.cancel} onPress={() => router.back()} />,
         }}
       />
       <View style={[styles.iconWrap, { backgroundColor: colors.tintSoft }]}>
@@ -83,9 +80,7 @@ export default function PatternSetupScreen() {
         {error ?? ' '}
       </Text>
       <PatternLock onComplete={onComplete} />
-      <Text style={[Type.footnote, styles.note, { color: colors.textTertiary }]}>
-        手势锁只存在这台设备上,用于打开加了锁的日记。忘记图案时,重新登录即可重置。
-      </Text>
+      <Text style={[Type.footnote, styles.note, { color: colors.textTertiary }]}>{t.pattern.note}</Text>
     </View>
   );
 }

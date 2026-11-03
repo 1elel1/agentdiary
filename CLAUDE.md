@@ -70,6 +70,7 @@
   - 颜色/字号/圆角/间距只从 `client/constants/theme.ts` 取(`useTheme()`),组件里不写死 rgba;iOS 系统分层(grouped background → surface → fill)+ 一套靛蓝强调色
   - 通用件在 `client/components/ui/`(Button / Card / ListGroup+ListRow / TextField / SegmentedControl / Sheet+ActionSheet / Pill / Banner / EmptyState / Avatar / LargeHeader),新页面先复用再造
   - **不要用 `Alert.alert` / `Alert.prompt`**:react-native-web 里前者是空实现、后者只有 iOS 有。确认/提示一律 `lib/dialog.ts`(`dialog.confirm` / `dialog.alert`),它由根布局的 `<DialogHost />` 渲染,三端一致
+  - **文案一律走字典**:`client/lib/i18n/`(`zh-Hans.ts` 是主字典,繁中 / 英 / 日 / 韩由 `Dict` 类型约束,少键编译不过)。组件里 `const t = useT()`,非组件代码 `getDict()`;不要在组件里写死中文,新文案先加进五个字典。界面语言在「我 → 偏好 → 语言」(默认跟随系统,存本机);后端靠请求头 `X-Language` 决定化身回复语言与推荐理由文案
   - 导航是标准底部 Tab(日记 / 对话 / 我)+ 原生栈;编辑类页面用 `presentation: 'modal'` 并在页面内用 `Stack.Screen` 配置「取消 / 保存」
   - **不加新的原生依赖**(需要重新 EAS Build,OTA 推不出去);现有依赖已覆盖:reanimated、gesture-handler、expo-image、expo-haptics、expo-linear-gradient、expo-symbols
   - 后端新增顶级路由时同步 `deploy/nginx-agentdiary.conf` 的正则(`/users/...` 之下的新接口不用改)

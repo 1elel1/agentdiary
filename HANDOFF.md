@@ -1,6 +1,6 @@
 # AgentDiary — 交接速查
 
-> 2026-11-03 建,2026-11-03 v4.0 迭代后更新。这份文件是为了让另一个 session
+> 2026-11-03 建,2026-11-03 v4.2 迭代后更新。这份文件是为了让另一个 session
 > (或几周后的你)不用翻聊天记录就能接着干。只记事实和踩过的坑,不记过程。
 > 每次迭代在文末「迭代记录」追加一段,Notion「AgentDiary」页同步一份。
 
@@ -100,16 +100,15 @@ sudo journalctl -u agentdiary-api -n 100 --no-pager
 
 ## 待办(按优先级)
 
-### 1. v4.0 已部署到服务器(2026-11-03 11:24 UTC),待真机验收与合并
+### 1. v4.0 → v4.2 都已通过 Actions 部署到服务器,待真机验收与合并
 
-**已完成**:GitHub Actions「Deploy to server」第 2 次运行成功
-(https://github.com/1elel1/agentdiary/actions/runs/41626981151):服务器同步到提交 `4565a2ec`,
-9 个测试在服务器上通过,API 重启,`/health` 本机与公网均 ok,网页版 `/login` 200。
-secret `DEPLOY_SSH_KEY` 已配好,以后部署:提交信息带 `[deploy]` 再 push(main / claude/** / deploy/** 分支),
+**已完成**:GitHub Actions「Deploy to server」把 v4.0(2026-11-03 11:24 UTC)、v4.1(13:14 UTC)、
+v4.2(见文末迭代记录)依次部署到服务器:rsync 同步代码 → 在服务器跑 pytest → 重启 API →
+公网健康检查。secret `DEPLOY_SSH_KEY` 已配好,以后部署:提交信息带 `[deploy]` 再 push(main / claude/** / deploy/** 分支),
 或 `git tag deploy-xxx && git push origin deploy-xxx`,或工作流进 main 后在 Actions 页点 Run workflow。
 
 **还没做**:
-1. 浏览器打开 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话 → 我 → 对外形象(旧标签页先强刷)
+1. 浏览器打开 https://43.130.127.226.sslip.io 过一遍:登录 → 日记 → 对话(搜索 / 推荐)→ 我 → 语言切到 English / 日本語 再切回 → 对外形象(旧标签页先强刷)
 2. 没问题就合进 main(见下)
 3. App 端 OTA(需要本机 Expo 登录,云端 session 做不了)
 
@@ -125,7 +124,7 @@ cd /home/ubuntu/agentdiary && NO_GIT=1 bash deploy/deploy.sh
 
 ```bash
 git checkout main && git merge --ff-only claude/brave-volta-zbr8b5 && git push
-cd client && eas update --channel preview --message "v4.0 ui + persona"
+cd client && eas update --channel preview --message "v4.2 i18n + discover + persona"
 ```
 
 真机重点看:底部 Tab 在刘海屏的安全区、聊天页键盘弹起时输入条位置(Android 带
@@ -195,6 +194,29 @@ App 失联**,修复要重新过审)、隐私政策 URL、App 隐私标签(需声
 - `CLAUDE.md` — 产品定位、技术方案、阶段门槛、隐私红线、客户端 UI 约定
 
 ## 迭代记录
+
+### v4.2 · 2026-11-03 · 五种界面语言 + 化身回复语言
+
+**部署**:提交信息带 `[deploy]` 推送后由 Actions 部署(运行链接与时间见随后的 docs 提交和 Notion 迭代记录)。
+
+**界面语言(我 → 偏好 → 语言)**
+- 简体中文 / 繁體中文 / English / 日本語 / 한국어,外加「跟随系统」(默认;靠 `Intl` / `navigator.language` 判断,
+  不依赖 expo-localization,所以可 OTA);选择存本机(`settings-store.language`),刷新与重启后保持
+- 客户端全部文案进字典 `client/lib/i18n/`:`zh-Hans.ts` 是主字典,其余四种标注为 `Dict` 类型,少一个键编译不过;
+  组件里 `useT()`,非组件代码(store / `lib/format.ts` / `lib/dialog.ts`)用 `getDict()`;日期标签、周几、
+  「还可修改 N 小时」这类带文字的格式也随语言;`ActionSheet` 新增 `selected` 打勾(语言单选用)
+- 日记原文、用户名、兴趣标签、化身的历史消息是内容,不翻译
+- 根布局等设置恢复后再出首帧,避免先闪一下默认语言
+
+**后端**
+- 新请求头 `X-Language`(`app/i18n.py`;缺省或不认识 = zh-Hans)。`/chat` 把它写进 system prompt,化身用该语言回复
+  (名人化身保持口吻与思想方式,只换语言);`/users/recommended` 的推荐理由模板按它选(标签本身不翻译)
+- 接口错误 `detail` 仍是中文(待办,量大且多数只在异常时出现)
+- 测试 18 个(+化身回复语言、+推荐理由语言)
+
+**其他**
+- `APP_VERSION` v4.2;`lib/backgrounds.ts` 预设只放颜色,显示名在字典
+- 本地验收:网页版切换五种语言各截一轮,`X-Language` 随切换变化,无控制台错误
 
 ### v4.1 · 2026-11-03 · 发现页重做 + 100 个种子用户
 

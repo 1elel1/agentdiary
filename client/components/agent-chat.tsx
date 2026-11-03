@@ -18,6 +18,7 @@ import { Banner } from '@/components/ui/banner';
 import { EmptyState } from '@/components/ui/empty-state';
 import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 
 interface Message {
   id: string;
@@ -54,6 +55,7 @@ export function AgentChat({
   intro?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  const t = useT();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -164,12 +166,12 @@ export function AgentChat({
         />
       )}
 
-      {sending && <TypingIndicator hint="化身在想怎么回,约 10~30 秒" />}
+      {sending && <TypingIndicator hint={t.visit.typing} />}
       {error && (
         <Banner
           tone="danger"
           message={error}
-          actionLabel={draft.trim() ? '重试' : undefined}
+          actionLabel={draft.trim() ? t.common.retry : undefined}
           onAction={() => send(draft.trim())}
           style={styles.banner}
         />
@@ -179,7 +181,7 @@ export function AgentChat({
         value={draft}
         onChange={setDraft}
         onSend={() => send(draft.trim())}
-        placeholder="说点什么…"
+        placeholder={t.visit.inputPlaceholder}
         disabled={sending}
         bottomInset={!kbVisible}
       />

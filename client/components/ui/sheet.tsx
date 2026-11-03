@@ -16,6 +16,7 @@ import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 
 const useNative = Platform.OS !== 'web';
 
@@ -37,6 +38,7 @@ export function Sheet({
   contentStyle?: StyleProp<ViewStyle>;
 }) {
   const { colors } = useTheme();
+  const t = useT();
   const insets = useSafeAreaInsets();
   const progress = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(visible);
@@ -66,7 +68,7 @@ export function Sheet({
     <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <View style={styles.root}>
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.scrim, opacity: progress }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="关闭" />
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={t.common.close} />
         </Animated.View>
         <Animated.View
           style={[
@@ -94,6 +96,8 @@ export interface SheetAction {
   disabled?: boolean;
   /** 右侧补充说明 */
   detail?: string;
+  /** 右侧打勾(单选列表,如语言选择) */
+  selected?: boolean;
 }
 
 /** 动作面板:一组可点的行 + 取消。替代系统 ActionSheet,Web 也能用。 */
@@ -104,7 +108,7 @@ export function ActionSheet({
   message,
   actions,
   header,
-  cancelLabel = '取消',
+  cancelLabel,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -115,6 +119,7 @@ export function ActionSheet({
   cancelLabel?: string;
 }) {
   const { colors } = useTheme();
+  const t = useT();
   return (
     <Sheet visible={visible} onClose={onClose} title={title}>
       {message && (
@@ -156,6 +161,7 @@ export function ActionSheet({
               {a.detail && (
                 <Text style={[Type.subhead, { color: colors.textSecondary }]}>{a.detail}</Text>
               )}
+              {a.selected && <IconSymbol name="checkmark" size={17} color={colors.tint} weight="semibold" />}
             </Pressable>
           </View>
         ))}
@@ -166,7 +172,7 @@ export function ActionSheet({
           styles.cancel,
           { backgroundColor: colors.surfaceSecondary, opacity: pressed ? 0.7 : 1 },
         ]}>
-        <Text style={[Type.headline, { color: colors.tint }]}>{cancelLabel}</Text>
+        <Text style={[Type.headline, { color: colors.tint }]}>{cancelLabel ?? t.common.cancel}</Text>
       </Pressable>
     </Sheet>
   );

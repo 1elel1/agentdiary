@@ -2,6 +2,7 @@ import { kvGet, kvSet } from '@/lib/kv';
 import { create } from 'zustand';
 
 import type { BackgroundSetting } from '@/lib/backgrounds';
+import type { LanguageSetting } from '@/lib/i18n/types';
 
 const SETTINGS_KEY = 'agentdiary_appearance';
 
@@ -12,19 +13,19 @@ interface SettingsState {
   setLockPattern: (pattern: string | null) => Promise<void>;
   diaryBg: BackgroundSetting;
   chatBg: BackgroundSetting;
+  // 界面语言:'system' = 跟随设备;化身回复也跟随它(请求头 X-Language)
+  language: LanguageSetting;
   hydrate: () => Promise<void>;
   setDiaryBg: (bg: BackgroundSetting) => Promise<void>;
   setChatBg: (bg: BackgroundSetting) => Promise<void>;
+  setLanguage: (language: LanguageSetting) => Promise<void>;
 }
 
 const DEFAULT: BackgroundSetting = { kind: 'default' };
 
-async function persist(
-  diaryBg: BackgroundSetting,
-  chatBg: BackgroundSetting,
-  lockPattern: string | null,
-) {
-  await kvSet(SETTINGS_KEY, JSON.stringify({ diaryBg, chatBg, lockPattern }));
+async function persist(state: Pick<SettingsState, 'diaryBg' | 'chatBg' | 'lockPattern' | 'language'>) {
+  const { diaryBg, chatBg, lockPattern, language } = state;
+  await kvSet(SETTINGS_KEY, JSON.stringify({ diaryBg, chatBg, lockPattern, language }));
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -32,6 +33,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   diaryBg: DEFAULT,
   chatBg: DEFAULT,
   lockPattern: null,
+  language: 'system',
 
   hydrate: async () => {
     try {
@@ -42,6 +44,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           diaryBg: parsed.diaryBg ?? DEFAULT,
           chatBg: parsed.chatBg ?? DEFAULT,
           lockPattern: parsed.lockPattern ?? null,
+          language: parsed.language ?? 'system',
         });
       }
     } catch {
@@ -53,16 +56,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setDiaryBg: async (bg) => {
     set({ diaryBg: bg });
-    await persist(bg, get().chatBg, get().lockPattern);
+    await persist(get());
   },
 
   setChatBg: async (bg) => {
     set({ chatBg: bg });
-    await persist(get().diaryBg, bg, get().lockPattern);
+    await persist(get());
   },
 
   setLockPattern: async (pattern) => {
     set({ lockPattern: pattern });
-    await persist(get().diaryBg, get().chatBg, pattern);
+    await persist(get());
+  },
+
+  setLanguage: async (language) => {
+    set({ language });
+    await persist(get());
   },
 }));

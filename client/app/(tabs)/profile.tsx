@@ -10,12 +10,14 @@ import { Button } from '@/components/ui/button';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { LargeHeader } from '@/components/ui/large-header';
 import { ListGroup, ListRow } from '@/components/ui/list';
+import { ActionSheet } from '@/components/ui/sheet';
 import { APP_VERSION } from '@/constants/app';
 import { Radius, Type, cardShadow } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { dialog } from '@/lib/dialog';
 import { haptic } from '@/lib/haptics';
+import { LANGUAGE_CODES, LANGUAGE_NAMES, useT, type LanguageSetting } from '@/lib/i18n';
 import { useAuthStore } from '@/stores/auth-store';
 import { useProfileStore } from '@/stores/profile-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -31,9 +33,13 @@ function Profile() {
   const { colors, scheme, isDark } = useTheme();
   const { username, userId, avatarTs, logout, setAvatarTs } = useAuthStore();
   const lockPattern = useSettingsStore((s) => s.lockPattern);
+  const language = useSettingsStore((s) => s.language);
+  const setLanguage = useSettingsStore((s) => s.setLanguage);
+  const t = useT();
   const { status, persona, cardCount, refresh, reset } = useProfileStore();
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [langSheet, setLangSheet] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -59,7 +65,7 @@ function Profile() {
       await setAvatarTs(r.avatar_updated_at);
       haptic.success();
     } catch (e) {
-      dialog.alert('头像更新失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.profile.avatarFailed, e instanceof Error ? e.message : String(e));
     } finally {
       setAvatarBusy(false);
     }
@@ -68,7 +74,7 @@ function Profile() {
   const checkUpdate = async () => {
     if (checking) return;
     if (!Updates.isEnabled) {
-      dialog.alert('开发模式', '当前不是发布版,无法检查 OTA 更新。');
+      dialog.alert(t.profile.devMode, t.profile.devModeMessage);
       return;
     }
     setChecking(true);
@@ -76,16 +82,16 @@ function Profile() {
       const result = await Updates.checkForUpdateAsync();
       if (result.isAvailable) {
         await Updates.fetchUpdateAsync();
-        const idx = await dialog.show('新版本已下载', '重启应用即可生效。', [
-          { label: '稍后', style: 'cancel' },
-          { label: '立即重启' },
+        const idx = await dialog.show(t.profile.updateReady, t.profile.updateReadyMessage, [
+          { label: t.common.later, style: 'cancel' },
+          { label: t.profile.restartNow },
         ]);
         if (idx === 1) await Updates.reloadAsync();
       } else {
-        dialog.alert('已是最新版本', `当前 ${APP_VERSION}`);
+        dialog.alert(t.profile.upToDate, t.profile.currentVersion(APP_VERSION));
       }
     } catch (e) {
-      dialog.alert('检查更新失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.profile.updateFailed, e instanceof Error ? e.message : String(e));
     } finally {
       setChecking(false);
     }
@@ -93,9 +99,9 @@ function Profile() {
 
   const confirmLogout = async () => {
     const ok = await dialog.confirm({
-      title: '退出登录?',
-      message: '本机的离线日记队列会保留,下次登录后继续同步。',
-      confirmText: '退出',
+      title: t.profile.logoutTitle,
+      message: t.profile.logoutMessage,
+      confirmText: t.profile.logoutConfirm,
       destructive: true,
     });
     if (!ok) return;
@@ -104,14 +110,18 @@ function Profile() {
     router.replace('/login');
   };
 
-  const personaSubtitle = persona
-    ? persona.split('\n')[0]
-    : '告诉别人你希望被怎样了解,化身会据此呈现你';
+  // 界面语言:存本机设置,化身回复语言随之改变(X-Language 请求头)
+  const pickLanguage = (setting: LanguageSetting) => {
+    haptic.selection();
+    setLanguage(setting).catch(() => {});
+  };
+
+  const personaSubtitle = persona ? persona.split('\n')[0] : t.profile.personaHint;
 
   return (
     <View style={[styles.flex, { paddingTop: insets.top }]}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <LargeHeader title="我" />
+        <LargeHeader title={t.profile.title} />
 
         {/* 身份卡 */}
         <View
@@ -121,8 +131,8 @@ function Profile() {
             cardShadow(scheme),
             isDark && { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.separator },
           ]}>
-          <Pressable onPress={pickAvatar} hitSlop={6} accessibilityLabel="更换头像">
-            <Avatar username={username ?? '我'} userId={userId} avatarTs={avatarTs} size={76} />
+          <Pressable onPress={pickAvatar} hitSlop={6} accessibilityLabel={t.profile.changeAvatar}>
+            <Avatar username={username ?? t.profile.title} userId={userId} avatarTs={avatarTs} size={76} />
             <View style={[styles.avatarBadge, { backgroundColor: colors.tint, borderColor: colors.surface }]}>
               {avatarBusy ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -144,34 +154,32 @@ function Profile() {
             <Text
               style={[Type.footnote, { color: status ? colors.tint : colors.textSecondary, fontWeight: '600' }]}
               numberOfLines={1}>
-              {status ? `今日:${status}` : '设个今日状态'}
+              {status ? t.common.today(status) : t.profile.setStatus}
             </Text>
           </Pressable>
         </View>
 
-        <ListGroup
-          title="我的化身"
-          footer="对外形象是写给别人看的自我介绍;人格卡片是化身从日记里学到的你。两者一起决定化身在别人面前的样子。">
+        <ListGroup title={t.profile.myAvatar} footer={t.profile.myAvatarFooter}>
           <ListRow
             icon="person.text.rectangle.fill"
             iconColor={colors.tint}
-            title="对外形象"
+            title={t.profile.persona}
             subtitle={personaSubtitle}
-            value={persona ? undefined : '未设置'}
+            value={persona ? undefined : t.common.notSet}
             onPress={() => router.push('/persona-editor')}
           />
           <ListRow
             icon="brain.head.profile"
             iconColor={colors.info}
-            title="人格卡片"
-            value={`${cardCount} 张`}
+            title={t.profile.cards}
+            value={t.common.cardsShort(cardCount)}
             onPress={() => router.push('/persona-cards')}
           />
           <ListRow
             icon="bubble.left.fill"
             iconColor={colors.success}
-            title="和我的化身聊聊"
-            subtitle="检验它像不像你"
+            title={t.profile.chatSelf}
+            subtitle={t.profile.chatSelfHint}
             onPress={() =>
               router.push({
                 pathname: '/visit/[userId]',
@@ -181,35 +189,42 @@ function Profile() {
           />
         </ListGroup>
 
-        <ListGroup title="偏好">
+        <ListGroup title={t.profile.preferences} footer={t.profile.languageFooter}>
           <ListRow
             icon="paintbrush.fill"
             iconColor={colors.warning}
-            title="外观"
-            subtitle="日记与聊天的背景"
+            title={t.profile.appearance}
+            subtitle={t.profile.appearanceHint}
             onPress={() => router.push('/appearance')}
           />
           <ListRow
             icon="lock.fill"
             iconColor="#8E8E93"
-            title="手势锁"
-            value={lockPattern ? '已开启' : '未开启'}
+            title={t.profile.patternLock}
+            value={lockPattern ? t.common.on : t.common.off}
             onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'set' } })}
+          />
+          <ListRow
+            icon="globe"
+            iconColor={colors.info}
+            title={t.profile.language}
+            value={language === 'system' ? t.profile.languageSystem : LANGUAGE_NAMES[language]}
+            onPress={() => setLangSheet(true)}
           />
         </ListGroup>
 
-        <ListGroup title="账号">
+        <ListGroup title={t.profile.account}>
           <ListRow
             icon="key.fill"
             iconColor="#5856D6"
-            title="账号与安全"
-            subtitle="改名、改密码、注销"
+            title={t.profile.security}
+            subtitle={t.profile.securityHint}
             onPress={() => router.push('/settings')}
           />
           <ListRow
             icon="arrow.clockwise"
             iconColor="#34C759"
-            title={checking ? '正在检查更新…' : '检查更新'}
+            title={checking ? t.profile.checking : t.profile.checkUpdate}
             value={APP_VERSION}
             onPress={checkUpdate}
             chevron={false}
@@ -217,7 +232,7 @@ function Profile() {
         </ListGroup>
 
         <Button
-          title="退出登录"
+          title={t.profile.logout}
           variant="dangerSoft"
           fullWidth
           icon="rectangle.portrait.and.arrow.right"
@@ -227,6 +242,26 @@ function Profile() {
           AgentDiary {APP_VERSION}
         </Text>
       </ScrollView>
+
+      {/* 界面语言:跟随系统 + 五种语言,各语言用自称显示 */}
+      <ActionSheet
+        visible={langSheet}
+        onClose={() => setLangSheet(false)}
+        title={t.profile.languageSheetTitle}
+        actions={[
+          {
+            label: t.profile.languageSystem,
+            icon: 'globe',
+            selected: language === 'system',
+            onPress: () => pickLanguage('system'),
+          },
+          ...LANGUAGE_CODES.map((code) => ({
+            label: LANGUAGE_NAMES[code],
+            selected: language === code,
+            onPress: () => pickLanguage(code),
+          })),
+        ]}
+      />
     </View>
   );
 }

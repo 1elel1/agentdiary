@@ -21,6 +21,7 @@ import { api } from '@/lib/api';
 import { dialog } from '@/lib/dialog';
 import { dateKey, dayLabel, formatRemaining, formatTime, parseUtc } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
+import { useT, type Dict } from '@/lib/i18n';
 import type { PendingDiary } from '@/lib/offline-queue';
 import type { DiaryEntry, DiaryVisibility } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
@@ -42,17 +43,19 @@ type Row =
 
 type ItemRow = Exclude<Row, { kind: 'header' }>;
 
-const VISIBILITY_OPTIONS: { key: DiaryVisibility; label: string }[] = [
-  { key: 'public', label: '公开' },
-  { key: 'restricted', label: '指定的人' },
-  { key: 'private', label: '仅自己' },
-];
-
-const VISIBILITY_PILL: Record<DiaryVisibility, { label: string; tone: 'success' | 'info' | 'neutral' }> = {
-  public: { label: '公开', tone: 'success' },
-  restricted: { label: '指定的人', tone: 'info' },
-  private: { label: '仅自己', tone: 'neutral' },
+const VISIBILITY_TONE: Record<DiaryVisibility, 'success' | 'info' | 'neutral'> = {
+  public: 'success',
+  restricted: 'info',
+  private: 'neutral',
 };
+
+function visibilityOptions(t: Dict): { key: DiaryVisibility; label: string }[] {
+  return [
+    { key: 'public', label: t.visibility.public },
+    { key: 'restricted', label: t.visibility.restricted },
+    { key: 'private', label: t.visibility.private },
+  ];
+}
 
 export default function DiaryListScreen() {
   const token = useAuthStore((s) => s.token);
@@ -74,11 +77,11 @@ function DiaryCard({
   onLongPress: () => void;
 }) {
   const { colors } = useTheme();
+  const t = useT();
   const visibility = row.item.visibility as DiaryVisibility;
   const isLocked = row.kind === 'entry' && row.item.locked;
   const hideContent = isLocked && !unlocked;
   const remaining = row.kind === 'entry' ? editRemainingMs(row.item.created_at) : 0;
-  const pill = VISIBILITY_PILL[visibility];
 
   return (
     <Card onPress={onPress} onLongPress={onLongPress} style={styles.entryCard}>
@@ -89,16 +92,16 @@ function DiaryCard({
         <View style={styles.entryTopRight}>
           {isLocked && <IconSymbol name="lock.fill" size={13} color={colors.textTertiary} />}
           {row.kind === 'pending' ? (
-            <Pill label="待同步" tone="warning" icon="icloud.slash.fill" />
+            <Pill label={t.diary.pending} tone="warning" icon="icloud.slash.fill" />
           ) : (
-            <Pill label={pill.label} tone={pill.tone} />
+            <Pill label={t.visibility[visibility]} tone={VISIBILITY_TONE[visibility]} />
           )}
         </View>
       </View>
       {hideContent ? (
         <View style={styles.lockedBody}>
           <IconSymbol name="lock.fill" size={16} color={colors.textTertiary} />
-          <Text style={[Type.subhead, { color: colors.textTertiary }]}>已加锁 · 点按解锁查看</Text>
+          <Text style={[Type.subhead, { color: colors.textTertiary }]}>{t.diary.locked}</Text>
         </View>
       ) : (
         <Text style={[Type.callout, styles.entryContent, { color: colors.text }]} numberOfLines={6}>
@@ -109,7 +112,7 @@ function DiaryCard({
         <View style={styles.entryFooter}>
           <IconSymbol name="hourglass" size={12} color={colors.textTertiary} />
           <Text style={[Type.caption1, { color: colors.textTertiary }]}>
-            还可修改 {formatRemaining(remaining)}
+            {t.diary.editable(formatRemaining(remaining, t))}
           </Text>
         </View>
       )}
@@ -120,6 +123,7 @@ function DiaryCard({
 function DiaryList() {
   const insets = useSafeAreaInsets();
   const { colors, scheme } = useTheme();
+  const t = useT();
   const { entries, pending, loading, error, refresh, remove, setVisibility, setLocked } =
     useDiaryStore();
   const diaryBg = useSettingsStore((s) => s.diaryBg);
@@ -171,22 +175,19 @@ function DiaryList() {
     for (const r of filtered) {
       const key = dateKey(parseUtc(r.item.created_at));
       if (key !== lastKey) {
-        out.push({ kind: 'header', id: `h-${key}`, label: dayLabel(key) });
+        out.push({ kind: 'header', id: `h-${key}`, label: dayLabel(key, t) });
         lastKey = key;
       }
       out.push(r);
     }
     return out;
-  }, [items, selectedDate]);
+  }, [items, selectedDate, t]);
 
   const confirmDelete = async (row: ItemRow) => {
     const ok = await dialog.confirm({
-      title: row.kind === 'pending' ? '删除这篇未同步日记?' : '删除这篇日记?',
-      message:
-        row.kind === 'pending'
-          ? '它还没有上传,删除后不可恢复。'
-          : '衍生的对话对与人格卡片会一起删除,不可恢复。',
-      confirmText: '删除',
+      title: row.kind === 'pending' ? t.diary.deletePendingTitle : t.diary.deleteTitle,
+      message: row.kind === 'pending' ? t.diary.deletePendingMessage : t.diary.deleteMessage,
+      confirmText: t.common.delete,
       destructive: true,
     });
     if (!ok) return;
@@ -194,7 +195,7 @@ function DiaryList() {
       await remove(row.id);
       haptic.success();
     } catch (e) {
-      dialog.alert('删除失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.diary.deleteFailed, e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -203,9 +204,9 @@ function DiaryList() {
     if (row.kind !== 'entry') return;
     if (!row.item.locked) {
       if (!lockPattern) {
-        const idx = await dialog.show('先设置解锁图案', '加锁前需要先设置一个手势图案。', [
-          { label: '取消', style: 'cancel' },
-          { label: '去设置' },
+        const idx = await dialog.show(t.diary.needPatternTitle, t.diary.needPatternMessage, [
+          { label: t.common.cancel, style: 'cancel' },
+          { label: t.diary.goSet },
         ]);
         if (idx === 1) router.push({ pathname: '/pattern-setup', params: { mode: 'set' } });
         return;
@@ -219,7 +220,7 @@ function DiaryList() {
         });
         haptic.success();
       } catch {
-        dialog.alert('加锁失败', '请稍后再试。');
+        dialog.alert(t.diary.lockFailed, t.common.tryLater);
       }
       return;
     }
@@ -233,7 +234,7 @@ function DiaryList() {
             return next;
           });
         })
-        .catch(() => dialog.alert('解锁失败', '请稍后再试。'));
+        .catch(() => dialog.alert(t.diary.unlockFailed, t.common.tryLater));
     });
   };
 
@@ -244,16 +245,16 @@ function DiaryList() {
       router.push({ pathname: '/visibility-picker', params: { diaryId: row.id } });
       return;
     }
-    setVisibility(row.id, visibility).catch(() => dialog.alert('修改失败', '请稍后再试。'));
+    setVisibility(row.id, visibility).catch(() => dialog.alert(t.diary.changeFailed, t.common.tryLater));
   };
 
   const redistill = async (row: ItemRow) => {
     if (row.kind !== 'entry') return;
     try {
       await api.redistillDiary(row.id);
-      dialog.alert('已重新开始学习', '化身会在后台重新读这篇日记,约半分钟后人格卡片更新。');
+      dialog.alert(t.diary.relearnedTitle, t.diary.relearnedMessage);
     } catch (e) {
-      dialog.alert('操作失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.common.actionFailed, e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -279,8 +280,7 @@ function DiaryList() {
   };
 
   const count = items.length;
-  const subtitle =
-    count === 0 ? '写下第一篇,化身就开始学你' : `${count} 篇日记${cardCount ? ` · ${cardCount} 张人格卡片` : ''}`;
+  const subtitle = count === 0 ? t.diary.firstHint : t.diary.summary(count, cardCount);
 
   return (
     <ScreenBackground setting={diaryBg}>
@@ -294,7 +294,7 @@ function DiaryList() {
           ListHeaderComponent={
             <View>
               <LargeHeader
-                title="日记"
+                title={t.diary.title}
                 subtitle={subtitle}
                 right={
                   <>
@@ -302,12 +302,12 @@ function DiaryList() {
                       name="calendar"
                       active={showCalendar || !!selectedDate}
                       onPress={() => setShowCalendar((v) => !v)}
-                      accessibilityLabel="按日期筛选"
+                      accessibilityLabel={t.diary.filterByDate}
                     />
                     <IconButton
                       name="paintbrush.fill"
                       onPress={() => router.push('/appearance')}
-                      accessibilityLabel="外观"
+                      accessibilityLabel={t.diary.appearance}
                     />
                   </>
                 }
@@ -335,7 +335,7 @@ function DiaryList() {
                       { color: status ? colors.tint : colors.textSecondary, fontWeight: '600' },
                     ]}
                     numberOfLines={1}>
-                    {status ? status : '今天怎么样?设个状态'}
+                    {status ? status : t.diary.statusPrompt}
                   </Text>
                 </Pressable>
                 {selectedDate && (
@@ -355,15 +355,11 @@ function DiaryList() {
             !loading ? (
               <EmptyState
                 icon="book.fill"
-                title={selectedDate ? '这天没有日记' : '还没有日记'}
-                message={
-                  selectedDate
-                    ? '换个日期看看,或者清除筛选。'
-                    : '写下的每一篇,都会成为化身更像你的材料。想到什么写什么,不用工整。'
-                }
+                title={selectedDate ? t.diary.emptyDayTitle : t.diary.emptyTitle}
+                message={selectedDate ? t.diary.emptyDayMessage : t.diary.emptyMessage}
                 action={
                   selectedDate ? undefined : (
-                    <Button title="写第一篇" icon="square.and.pencil" onPress={() => router.push('/diary-editor')} />
+                    <Button title={t.diary.writeFirst} icon="square.and.pencil" onPress={() => router.push('/diary-editor')} />
                   )
                 }
               />
@@ -386,7 +382,7 @@ function DiaryList() {
         {/* 写日记 */}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="写日记"
+          accessibilityLabel={t.diary.write}
           onPress={() => {
             haptic.light();
             router.push('/diary-editor');
@@ -403,13 +399,13 @@ function DiaryList() {
         <ActionSheet
           visible={actionRow !== null}
           onClose={() => setActionRow(null)}
-          title={actionRow ? formatTime(actionRow.item.created_at) + ' 的日记' : undefined}
+          title={actionRow ? t.diary.sheetTitle(formatTime(actionRow.item.created_at)) : undefined}
           header={
             actionRow ? (
               <View style={styles.sheetVisibility}>
-                <Text style={[Type.footnote, { color: colors.textSecondary }]}>谁能看到这篇</Text>
+                <Text style={[Type.footnote, { color: colors.textSecondary }]}>{t.visibility.whoCanSee}</Text>
                 <SegmentedControl<DiaryVisibility>
-                  options={VISIBILITY_OPTIONS}
+                  options={visibilityOptions(t)}
                   value={actionRow.item.visibility as DiaryVisibility}
                   onChange={(v) => {
                     const row = actionRow;
@@ -424,28 +420,28 @@ function DiaryList() {
             actionRow?.kind === 'entry'
               ? [
                   {
-                    label: actionRow.item.locked ? '取消加锁' : '加锁(手势图案)',
+                    label: actionRow.item.locked ? t.diary.unlock : t.diary.lock,
                     icon: actionRow.item.locked ? 'lock.open.fill' : 'lock.fill',
                     onPress: () => toggleLock(actionRow),
                   },
                   {
-                    label: '让化身重新学习这篇',
+                    label: t.diary.relearn,
                     icon: 'arrow.triangle.2.circlepath',
                     onPress: () => redistill(actionRow),
                   },
-                  { label: '删除这篇日记', icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) },
+                  { label: t.diary.deleteThis, icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) },
                 ]
               : actionRow
-                ? [{ label: '删除这篇日记', icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) }]
+                ? [{ label: t.diary.deleteThis, icon: 'trash.fill', destructive: true, onPress: () => confirmDelete(actionRow) }]
                 : []
           }
         />
 
         {/* 手势锁验证 */}
-        <Sheet visible={lockGate !== null} onClose={() => setLockGate(null)} title="绘制图案以解锁">
+        <Sheet visible={lockGate !== null} onClose={() => setLockGate(null)} title={t.diary.drawToUnlock}>
           <View style={styles.lockBody}>
             <Text style={[Type.footnote, { color: lockError ? colors.danger : colors.textSecondary }]}>
-              {lockError ? '图案不对,再试一次' : '这篇日记设了手势锁'}
+              {lockError ? t.diary.patternWrong : t.diary.hasLock}
             </Text>
             <PatternLock
               onComplete={(pattern) => {

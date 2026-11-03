@@ -20,19 +20,23 @@ import { useTheme } from '@/hooks/use-theme';
 import { dialog } from '@/lib/dialog';
 import { formatLongDate, parseUtc } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
+import { useT, type Dict } from '@/lib/i18n';
 import type { DiaryVisibility } from '@/lib/types';
 import { useDiaryStore } from '@/stores/diary-store';
 
-const VISIBILITY_OPTIONS: { key: DiaryVisibility; label: string; hint: string }[] = [
-  { key: 'public', label: '公开', hint: '化身可以对所有访客使用这篇日记学到的东西(不会复述原文)' },
-  { key: 'restricted', label: '指定的人', hint: '只有勾选的用户和你的化身聊天时才会用到' },
-  { key: 'private', label: '仅自己', hint: '只用于你和自己化身的对话' },
-];
+function visibilityOptions(t: Dict): { key: DiaryVisibility; label: string; hint: string }[] {
+  return [
+    { key: 'public', label: t.visibility.public, hint: t.visibility.publicHint },
+    { key: 'restricted', label: t.visibility.restricted, hint: t.visibility.restrictedHint },
+    { key: 'private', label: t.visibility.private, hint: t.visibility.privateHint },
+  ];
+}
 
 const EDIT_WINDOW_MS = 24 * 3600 * 1000;
 
 export default function DiaryEditorScreen() {
   const { colors } = useTheme();
+  const t = useT();
   const headerHeight = useHeaderHeight();
   const add = useDiaryStore((s) => s.add);
   const edit = useDiaryStore((s) => s.edit);
@@ -69,7 +73,7 @@ export default function DiaryEditorScreen() {
       router.back();
     } catch (e) {
       haptic.error();
-      dialog.alert('保存失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.common.saveFailed, e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
   };
@@ -77,9 +81,9 @@ export default function DiaryEditorScreen() {
   const close = async () => {
     if (dirty && canEdit) {
       const ok = await dialog.confirm({
-        title: '放弃这次编辑?',
-        message: '写了的内容不会保存。',
-        confirmText: '放弃',
+        title: t.editor.discardTitle,
+        message: t.editor.discardMessage,
+        confirmText: t.common.discard,
         destructive: true,
       });
       if (!ok) return;
@@ -87,9 +91,10 @@ export default function DiaryEditorScreen() {
     router.back();
   };
 
-  const selectedHint = VISIBILITY_OPTIONS.find((o) => o.key === visibility)?.hint;
-  const dateLine = formatLongDate(createdAt ? parseUtc(createdAt) : new Date());
-  const title = isEditing ? (canEdit ? '修改日记' : '日记') : '写日记';
+  const options = visibilityOptions(t);
+  const selectedHint = options.find((o) => o.key === visibility)?.hint;
+  const dateLine = formatLongDate(createdAt ? parseUtc(createdAt) : new Date(), t);
+  const title = isEditing ? (canEdit ? t.editor.titleEdit : t.editor.titleRead) : t.editor.titleNew;
 
   return (
     <KeyboardAvoidingView
@@ -99,10 +104,10 @@ export default function DiaryEditorScreen() {
       <Stack.Screen
         options={{
           title,
-          headerLeft: () => <HeaderButton title={canEdit ? '取消' : '关闭'} onPress={close} />,
+          headerLeft: () => <HeaderButton title={canEdit ? t.common.cancel : t.common.close} onPress={close} />,
           headerRight: () =>
             canEdit ? (
-              <HeaderButton title="保存" bold loading={saving} disabled={!dirty} onPress={save} />
+              <HeaderButton title={t.common.save} bold loading={saving} disabled={!dirty} onPress={save} />
             ) : null,
         }}
       />
@@ -117,7 +122,7 @@ export default function DiaryEditorScreen() {
                 color={colors.textTertiary}
               />
               <Text style={[Type.caption1, { color: colors.textTertiary }]}>
-                {canEdit ? '落笔 24 小时内可修改,改后化身会重新学习' : '已超过 24 小时,内容定格'}
+                {canEdit ? t.editor.editWindow : t.editor.frozen}
               </Text>
             </View>
           )}
@@ -126,7 +131,7 @@ export default function DiaryEditorScreen() {
         <TextInput
           style={[Type.body, styles.input, webNoOutline, { color: colors.text }]}
           multiline
-          placeholder="今天发生了什么?你怎么想?"
+          placeholder={t.editor.placeholder}
           placeholderTextColor={colors.placeholder}
           selectionColor={colors.tint}
           value={content}
@@ -139,8 +144,8 @@ export default function DiaryEditorScreen() {
         {/* 编辑模式只改内容;可见性在日记卡片长按菜单里调整 */}
         {!isEditing && (
           <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.separator }]}>
-            <Text style={[Type.footnote, styles.panelTitle, { color: colors.textSecondary }]}>谁能看到这篇</Text>
-            <SegmentedControl<DiaryVisibility> options={VISIBILITY_OPTIONS} value={visibility} onChange={setVisibility} />
+            <Text style={[Type.footnote, styles.panelTitle, { color: colors.textSecondary }]}>{t.visibility.whoCanSee}</Text>
+            <SegmentedControl<DiaryVisibility> options={options} value={visibility} onChange={setVisibility} />
             <Text style={[Type.caption1, styles.hint, { color: colors.textTertiary }]}>{selectedHint}</Text>
 
             {visibility === 'restricted' && (

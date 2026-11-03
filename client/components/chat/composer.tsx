@@ -6,6 +6,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Radius, Type, webNoOutline } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 
 /** 输入条:多行胶囊输入框 + 圆形发送键。 */
 export function Composer({
@@ -25,6 +26,7 @@ export function Composer({
   bottomInset?: boolean;
 }) {
   const { colors, isDark } = useTheme();
+  const t = useT();
   const insets = useSafeAreaInsets();
   const [focused, setFocused] = useState(false);
   const canSend = value.trim().length > 0 && !disabled;
@@ -80,7 +82,7 @@ export function Composer({
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="发送"
+          accessibilityLabel={t.common.send}
           disabled={!canSend}
           onPress={send}
           style={({ pressed }) => [

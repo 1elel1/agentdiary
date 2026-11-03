@@ -7,6 +7,8 @@
 
 import { create } from 'zustand';
 
+import { getDict } from './i18n';
+
 export interface DialogAction {
   label: string;
   style?: 'default' | 'cancel' | 'destructive';
@@ -45,7 +47,7 @@ export const dialog = {
       useDialogStore.getState().push({
         title,
         message,
-        actions: [{ label: '知道了', style: 'cancel', onPress: () => resolve() }],
+        actions: [{ label: getDict().common.ok, style: 'cancel', onPress: () => resolve() }],
       });
     });
   },
@@ -63,9 +65,9 @@ export const dialog = {
         title: opts.title,
         message: opts.message,
         actions: [
-          { label: opts.cancelText ?? '取消', style: 'cancel', onPress: () => resolve(false) },
+          { label: opts.cancelText ?? getDict().common.cancel, style: 'cancel', onPress: () => resolve(false) },
           {
-            label: opts.confirmText ?? '确定',
+            label: opts.confirmText ?? getDict().common.confirm,
             style: opts.destructive ? 'destructive' : 'default',
             onPress: () => resolve(true),
           },

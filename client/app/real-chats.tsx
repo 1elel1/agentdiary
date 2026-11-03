@@ -11,11 +11,13 @@ import { Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { formatRecent } from '@/lib/format';
+import { useT } from '@/lib/i18n';
 import type { ConversationItem } from '@/lib/types';
 
 // 真人聊天列表:只有 AI 裁判评估通过(解锁)的用户才会出现在这里
 export default function RealChatsScreen() {
   const { colors } = useTheme();
+  const t = useT();
   const [items, setItems] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -53,8 +55,8 @@ export default function RealChatsScreen() {
           loaded && !loading ? (
             <EmptyState
               icon="person.2.fill"
-              title="还没有解锁的真人对话"
-              message="先去和 TA 的化身聊上几句,再请 AI 裁判评估契合度。通过后,真人就会出现在这里。"
+              title={t.realChats.emptyTitle}
+              message={t.realChats.emptyMessage}
             />
           ) : null
         }
@@ -86,7 +88,7 @@ export default function RealChatsScreen() {
                   )}
                 </View>
                 <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {item.last_message ?? '已解锁,打个招呼吧'}
+                  {item.last_message ?? t.realChats.unlocked}
                 </Text>
               </View>
               <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />

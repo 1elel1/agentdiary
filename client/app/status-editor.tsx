@@ -9,15 +9,16 @@ import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { dialog } from '@/lib/dialog';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import { useAuthStore } from '@/stores/auth-store';
 import { useProfileStore } from '@/stores/profile-store';
 
-// 预设状态(微信状态式):点选即填,也可自由输入
-const PRESETS = ['😊 开心', '😪 有点累', '💻 搬砖中', '📚 学习中', '🏃 运动中', '🌙 想静静', '🍜 干饭中', '✈️ 在路上'];
+// 预设状态(微信状态式)在字典里 t.status.presets:点选即填,也可自由输入
 const MAX = 50;
 
 export default function StatusEditorScreen() {
   const { colors } = useTheme();
+  const t = useT();
   const userId = useAuthStore((s) => s.userId);
   const { loaded, status, refresh, saveStatus } = useProfileStore();
   const [text, setText] = useState(status ?? '');
@@ -39,7 +40,7 @@ export default function StatusEditorScreen() {
       haptic.success();
       router.back();
     } catch (e) {
-      dialog.alert('保存失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.common.saveFailed, e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   };
@@ -50,20 +51,18 @@ export default function StatusEditorScreen() {
     <>
       <Stack.Screen
         options={{
-          title: '今日状态',
-          headerLeft: () => <HeaderButton title="取消" onPress={() => router.back()} />,
+          title: t.status.title,
+          headerLeft: () => <HeaderButton title={t.common.cancel} onPress={() => router.back()} />,
           headerRight: () => (
-            <HeaderButton title="设为状态" bold loading={busy} disabled={!trimmed} onPress={() => save(trimmed)} />
+            <HeaderButton title={t.status.set} bold loading={busy} disabled={!trimmed} onPress={() => save(trimmed)} />
           ),
         }}
       />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={[Type.footnote, styles.hint, { color: colors.textSecondary }]}>
-          状态会展示给来找你化身聊天的人,也会影响化身今天的语气。24 小时后自动消失。
-        </Text>
+        <Text style={[Type.footnote, styles.hint, { color: colors.textSecondary }]}>{t.status.hint}</Text>
 
         <View style={styles.presets}>
-          {PRESETS.map((p) => {
+          {t.status.presets.map((p) => {
             const active = text === p;
             return (
               <Pressable
@@ -87,7 +86,7 @@ export default function StatusEditorScreen() {
         </View>
 
         <TextField
-          placeholder="或者自己写一个…"
+          placeholder={t.status.placeholder}
           value={text}
           onChangeText={setText}
           maxLength={MAX}
@@ -99,7 +98,7 @@ export default function StatusEditorScreen() {
         </Text>
 
         {status && (
-          <Button title="清除状态" variant="dangerSoft" fullWidth onPress={() => save(null)} disabled={busy} style={styles.clear} />
+          <Button title={t.status.clear} variant="dangerSoft" fullWidth onPress={() => save(null)} disabled={busy} style={styles.clear} />
         )}
       </ScrollView>
     </>

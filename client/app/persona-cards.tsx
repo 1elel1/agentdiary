@@ -9,6 +9,7 @@ import { Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { formatDateTime, parseUtc } from '@/lib/format';
+import { useT } from '@/lib/i18n';
 import type { DiaryEntry, PersonaCard } from '@/lib/types';
 
 interface Group {
@@ -27,6 +28,7 @@ function confidenceTone(c: number): 'success' | 'tint' | 'warning' {
 /** 人格卡片:化身从日记里学到的「你」。每张都能对回到来源日记(可追溯、可删除)。 */
 export default function PersonaCardsScreen() {
   const { colors } = useTheme();
+  const t = useT();
   const [cards, setCards] = useState<PersonaCard[]>([]);
   const [diaries, setDiaries] = useState<DiaryEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -81,10 +83,10 @@ export default function PersonaCardsScreen() {
         contentContainerStyle={[styles.list, groups.length === 0 && styles.listGrow]}
         ListHeaderComponent={
           <View style={styles.header}>
-            {error && <Banner tone="danger" message={error} actionLabel="重试" onAction={refresh} />}
+            {error && <Banner tone="danger" message={error} actionLabel={t.common.retry} onAction={refresh} />}
             {groups.length > 0 && (
               <Text style={[Type.footnote, { color: colors.textSecondary }]}>
-                共 {active} 张有效卡片,来自 {groups.length} 篇日记。每张都能追溯到来源;删除日记会一并删除它的卡片。
+                {t.cards.summary(active, groups.length)}
               </Text>
             )}
           </View>
@@ -93,8 +95,8 @@ export default function PersonaCardsScreen() {
           loaded && !loading ? (
             <EmptyState
               icon="brain.head.profile"
-              title="还没有人格卡片"
-              message="写日记后,化身会在后台提炼你的观点、偏好和当下心态,结果会出现在这里。"
+              title={t.cards.emptyTitle}
+              message={t.cards.emptyMessage}
             />
           ) : null
         }
@@ -102,10 +104,10 @@ export default function PersonaCardsScreen() {
           <Card padded={false} style={styles.group}>
             <View style={[styles.groupHeader, { borderBottomColor: colors.separator }]}>
               <Text style={[Type.caption1, { color: colors.textTertiary }]}>
-                来源日记 · {formatDateTime(item.createdAt)}
+                {t.cards.source(formatDateTime(item.createdAt))}
               </Text>
               <Text style={[Type.footnote, { color: colors.textSecondary }]} numberOfLines={2}>
-                {item.diary ? item.diary.content : '(日记已不可见)'}
+                {item.diary ? item.diary.content : t.cards.diaryGone}
               </Text>
             </View>
             {item.cards.map((card, i) => (
@@ -135,9 +137,9 @@ export default function PersonaCardsScreen() {
                     />
                   </View>
                   <Text style={[Type.caption1, { color: colors.textTertiary }]}>
-                    置信度 {card.confidence.toFixed(1)}
+                    {t.cards.confidence(card.confidence.toFixed(1))}
                   </Text>
-                  {card.superseded_by && <Pill label="已被新断言覆盖" tone="neutral" />}
+                  {card.superseded_by && <Pill label={t.cards.superseded} tone="neutral" />}
                 </View>
               </View>
             ))}

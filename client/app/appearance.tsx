@@ -14,6 +14,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { BACKGROUND_PRESETS, type BackgroundSetting } from '@/lib/backgrounds';
 import { dialog } from '@/lib/dialog';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import { useSettingsStore } from '@/stores/settings-store';
 
 function sameSetting(a: BackgroundSetting, b: BackgroundSetting): boolean {
@@ -82,6 +83,7 @@ function BackgroundPicker({
   slot: 'diary' | 'chat';
 }) {
   const { colors, scheme } = useTheme();
+  const t = useT();
   const [busy, setBusy] = useState(false);
 
   const upload = async () => {
@@ -91,7 +93,7 @@ function BackgroundPicker({
       const uri = await pickAndStoreImage(slot);
       if (uri) onChange({ kind: 'custom', uri });
     } catch (e) {
-      dialog.alert('选图失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.appearance.pickFailed, e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -101,7 +103,7 @@ function BackgroundPicker({
     <View style={styles.section}>
       <SectionLabel>{title}</SectionLabel>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        <Swatch selected={value.kind === 'default'} onPress={() => onChange({ kind: 'default' })} label="默认">
+        <Swatch selected={value.kind === 'default'} onPress={() => onChange({ kind: 'default' })} label={t.appearance.default}>
           <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]} />
         </Swatch>
         {BACKGROUND_PRESETS.map((p) => (
@@ -109,11 +111,11 @@ function BackgroundPicker({
             key={p.id}
             selected={sameSetting(value, { kind: 'preset', id: p.id })}
             onPress={() => onChange({ kind: 'preset', id: p.id })}
-            label={p.name}>
+            label={t.appearance.presets[p.id] ?? p.id}>
             <LinearGradient colors={p[scheme]} style={StyleSheet.absoluteFill} />
           </Swatch>
         ))}
-        <Swatch selected={value.kind === 'custom'} onPress={upload} label={value.kind === 'custom' ? '相册(换一张)' : '相册'}>
+        <Swatch selected={value.kind === 'custom'} onPress={upload} label={value.kind === 'custom' ? t.appearance.albumChange : t.appearance.album}>
           {value.kind === 'custom' ? (
             <Image source={{ uri: value.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
           ) : (
@@ -130,29 +132,28 @@ function BackgroundPicker({
 export default function AppearanceScreen() {
   const { diaryBg, chatBg, setDiaryBg, setChatBg, lockPattern } = useSettingsStore();
   const { colors } = useTheme();
+  const t = useT();
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <BackgroundPicker title="日记背景" value={diaryBg} onChange={setDiaryBg} slot="diary" />
-      <BackgroundPicker title="聊天背景" value={chatBg} onChange={setChatBg} slot="chat" />
-      <Text style={[Type.caption1, styles.hint, { color: colors.textTertiary }]}>
-        自定义图片会加一层淡淡的遮罩来保证文字可读;更换后立即生效。
-      </Text>
+      <BackgroundPicker title={t.appearance.diaryBg} value={diaryBg} onChange={setDiaryBg} slot="diary" />
+      <BackgroundPicker title={t.appearance.chatBg} value={chatBg} onChange={setChatBg} slot="chat" />
+      <Text style={[Type.caption1, styles.hint, { color: colors.textTertiary }]}>{t.appearance.hint}</Text>
 
       <View style={styles.lockGroup}>
-        <ListGroup title="私密日记手势锁" footer="手势锁只存在这台设备上,用于打开加了锁的日记。忘记图案时,重新登录即可重置。">
+        <ListGroup title={t.appearance.lockGroup} footer={t.appearance.lockFooter}>
           <ListRow
             icon="lock.fill"
             iconColor="#8E8E93"
-            title={lockPattern ? '修改图案' : '设置图案'}
-            value={lockPattern ? '已开启' : '未开启'}
+            title={lockPattern ? t.appearance.changePattern : t.appearance.setPattern}
+            value={lockPattern ? t.common.on : t.common.off}
             onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'set' } })}
           />
           {lockPattern ? (
             <ListRow
               icon="lock.open.fill"
               iconColor="#FF9F0A"
-              title="关闭手势锁"
+              title={t.appearance.disableLock}
               onPress={() => router.push({ pathname: '/pattern-setup', params: { mode: 'disable' } })}
             />
           ) : null}

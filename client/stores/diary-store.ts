@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { api, ApiError } from '@/lib/api';
+import { getDict } from '@/lib/i18n';
 import {
   loadCache,
   loadQueue,
@@ -65,7 +66,7 @@ export const useDiaryStore = create<DiaryState>((set, get) => ({
         entries: cached,
         pending: queue,
         loading: false,
-        error: '当前离线，展示的是本地缓存；新日记会先存在本机，联网后自动同步。',
+        error: getDict().errors.offlineCache,
       });
     }
   },

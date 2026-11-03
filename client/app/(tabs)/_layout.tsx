@@ -4,6 +4,7 @@ import { Platform, StyleSheet } from 'react-native';
 import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 
 // 标准 iOS 底部标签栏:三个入口,图标 + 文字,始终可见。
 // 之前的「条纹划动导航」实验(bd4816d5)已移除:它把标签藏起来、
@@ -16,6 +17,7 @@ function TabIcon({ name, color, focused }: { name: IconSymbolName; color: string
 
 export default function TabLayout() {
   const { colors } = useTheme();
+  const t = useT();
 
   return (
     <Tabs
@@ -40,14 +42,14 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: '日记',
+          title: t.tabs.diary,
           tabBarIcon: ({ color, focused }) => <TabIcon name="book.fill" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="chats"
         options={{
-          title: '对话',
+          title: t.tabs.chats,
           tabBarIcon: ({ color, focused }) => (
             <TabIcon name="bubble.left.and.bubble.right.fill" color={color} focused={focused} />
           ),
@@ -56,7 +58,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: '我',
+          title: t.tabs.me,
           tabBarIcon: ({ color, focused }) => (
             <TabIcon name="person.crop.circle.fill" color={color} focused={focused} />
           ),

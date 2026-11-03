@@ -20,12 +20,14 @@ import { TextField } from '@/components/ui/text-field';
 import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import { useAuthStore } from '@/stores/auth-store';
 
 type Mode = 'login' | 'register';
 
 export default function LoginScreen() {
   const { colors } = useTheme();
+  const t = useT();
   const insets = useSafeAreaInsets();
   const { login, register } = useAuthStore();
 
@@ -75,14 +77,14 @@ export default function LoginScreen() {
             <IconSymbol name="book.fill" size={34} color="#fff" weight="semibold" />
           </LinearGradient>
           <Text style={[Type.title1, { color: colors.text }]}>AgentDiary</Text>
-          <Text style={[Type.subhead, { color: colors.textSecondary }]}>写日记,养一个像你的化身</Text>
+          <Text style={[Type.subhead, { color: colors.textSecondary }]}>{t.login.tagline}</Text>
         </View>
 
         <Card style={styles.card}>
           <SegmentedControl<Mode>
             options={[
-              { key: 'login', label: '登录' },
-              { key: 'register', label: '注册' },
+              { key: 'login', label: t.login.login },
+              { key: 'register', label: t.login.register },
             ]}
             value={mode}
             onChange={(m) => {
@@ -94,7 +96,7 @@ export default function LoginScreen() {
             <TextField
               tone="fill"
               icon="person.fill"
-              placeholder="用户名"
+              placeholder={t.login.username}
               autoCapitalize="none"
               autoCorrect={false}
               textContentType="username"
@@ -105,7 +107,7 @@ export default function LoginScreen() {
             <TextField
               tone="fill"
               icon="lock.fill"
-              placeholder={mode === 'register' ? '密码(至少 6 位)' : '密码'}
+              placeholder={mode === 'register' ? t.login.passwordNew : t.login.password}
               secureTextEntry={!showPassword}
               textContentType={mode === 'register' ? 'newPassword' : 'password'}
               value={password}
@@ -113,7 +115,7 @@ export default function LoginScreen() {
               onSubmitEditing={submit}
               returnKeyType="go"
               right={
-                <Pressable onPress={() => setShowPassword((v) => !v)} hitSlop={8} accessibilityLabel="显示密码">
+                <Pressable onPress={() => setShowPassword((v) => !v)} hitSlop={8} accessibilityLabel={t.login.showPassword}>
                   <IconSymbol
                     name={showPassword ? 'eye.slash.fill' : 'eye.fill'}
                     size={18}
@@ -125,7 +127,7 @@ export default function LoginScreen() {
           </View>
           {error && <Text style={[Type.footnote, styles.error, { color: colors.danger }]}>{error}</Text>}
           <Button
-            title={mode === 'login' ? '登录' : '创建账号'}
+            title={mode === 'login' ? t.login.login : t.login.createAccount}
             size="lg"
             fullWidth
             loading={busy}
@@ -138,7 +140,7 @@ export default function LoginScreen() {
         <View style={styles.notice}>
           <IconSymbol name="lock.fill" size={13} color={colors.textTertiary} />
           <Text style={[Type.caption1, styles.noticeText, { color: colors.textTertiary }]}>
-            日记是最高敏感级数据,只用于训练你自己的化身。别人和你的化身对话时,看不到日记原文。
+            {t.login.privacy}
           </Text>
         </View>
       </ScrollView>

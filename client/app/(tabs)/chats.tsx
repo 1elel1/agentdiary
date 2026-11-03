@@ -25,6 +25,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { formatRecent } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
+import { useT, type Dict } from '@/lib/i18n';
 import type { TagCount, UserSummary } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
 import { useProfileStore } from '@/stores/profile-store';
@@ -44,10 +45,10 @@ function openChat(user: UserSummary) {
   });
 }
 
-function metaLine(user: UserSummary): string {
-  if (user.is_builtin) return '名人化身';
-  if (user.card_count > 0) return `${user.card_count} 张人格卡片`;
-  return '化身尚未喂养';
+function metaLine(user: UserSummary, t: Dict): string {
+  if (user.is_builtin) return t.chats.celebrity;
+  if (user.card_count > 0) return t.common.cards(user.card_count);
+  return t.chats.notFed;
 }
 
 function PersonRow({
@@ -66,6 +67,7 @@ function PersonRow({
   trailing?: string | null;
 }) {
   const { colors } = useTheme();
+  const t = useT();
   return (
     <Pressable
       onPress={() => openChat(user)}
@@ -77,7 +79,7 @@ function PersonRow({
             {user.username}
           </Text>
           <Text style={[Type.caption1, { color: colors.textTertiary }]} numberOfLines={1}>
-            {trailing ?? metaLine(user)}
+            {trailing ?? metaLine(user, t)}
           </Text>
         </View>
         {hint ? (
@@ -130,6 +132,7 @@ export default function ChatsScreen() {
 function Chats() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const t = useT();
   const { username, userId, avatarTs } = useAuthStore();
   const { persona, cardCount, refresh: refreshProfile } = useProfileStore();
 
@@ -237,13 +240,13 @@ function Chats() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.textSecondary} />}>
         <LargeHeader
-          title="对话"
-          subtitle="和化身聊,聊得来再见真人"
+          title={t.chats.title}
+          subtitle={t.chats.subtitle}
           right={
             <IconButton
               name="person.2.fill"
               onPress={() => router.push('/real-chats')}
-              accessibilityLabel="真人聊天"
+              accessibilityLabel={t.chats.realChats}
             />
           }
         />
@@ -251,7 +254,7 @@ function Chats() {
         <View style={styles.search}>
           <TextField
             icon="magnifyingglass"
-            placeholder="搜索用户名…"
+            placeholder={t.chats.searchPlaceholder}
             value={query}
             onChangeText={setQuery}
             autoCapitalize="none"
@@ -261,7 +264,7 @@ function Chats() {
               searching ? (
                 <ActivityIndicator size="small" color={colors.textTertiary} />
               ) : query ? (
-                <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="清除">
+                <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel={t.common.clear}>
                   <IconSymbol name="xmark.circle.fill" size={18} color={colors.textTertiary} />
                 </Pressable>
               ) : undefined
@@ -272,38 +275,38 @@ function Chats() {
         {isSearching ? (
           results.length > 0 ? (
             <>
-              <SectionLabel>搜索结果</SectionLabel>
+              <SectionLabel>{t.chats.results}</SectionLabel>
               <RowGroup>
                 {results.map((u) => (
-                  <PersonRow key={u.id} user={u} hint={u.status ? `今日:${u.status}` : u.persona_excerpt} showTags />
+                  <PersonRow key={u.id} user={u} hint={u.status ? t.common.today(u.status) : u.persona_excerpt} showTags />
                 ))}
               </RowGroup>
             </>
           ) : !searching ? (
-            <EmptyState icon="magnifyingglass" title={`没有叫「${query.trim()}」的人`} message="试试完整的用户名,或者看看下面的推荐。" />
+            <EmptyState icon="magnifyingglass" title={t.chats.noMatch(query.trim())} message={t.chats.noMatchHint} />
           ) : null
         ) : (
           <>
             {/* 我的化身 */}
             <Card onPress={openSelf} style={styles.selfCard}>
               <View style={styles.selfTop}>
-                <Avatar username={username ?? '我'} userId={userId} avatarTs={avatarTs} size={54} />
+                <Avatar username={username ?? t.tabs.me} userId={userId} avatarTs={avatarTs} size={54} />
                 <View style={styles.rowBody}>
-                  <Text style={[Type.headline, { color: colors.text }]}>我的化身</Text>
+                  <Text style={[Type.headline, { color: colors.text }]}>{t.chats.myAvatar}</Text>
                   <Text style={[Type.subhead, { color: colors.textSecondary }]} numberOfLines={1}>
-                    由你的日记喂养{cardCount ? ` · ${cardCount} 张人格卡片` : ' · 还没有人格卡片'}
+                    {t.chats.fedBy(cardCount)}
                   </Text>
                 </View>
                 <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
               </View>
               <View style={[styles.selfFooter, { borderTopColor: colors.separator }]}>
                 <Pill
-                  label={persona ? '对外形象已设置' : '还没写对外形象'}
+                  label={persona ? t.chats.personaSet : t.chats.personaUnset}
                   tone={persona ? 'tint' : 'warning'}
                   icon="person.text.rectangle.fill"
                 />
                 <Button
-                  title={persona ? '编辑' : '去写一段'}
+                  title={persona ? t.common.edit : t.chats.writeOne}
                   variant="ghost"
                   size="sm"
                   onPress={() => router.push('/persona-editor')}
@@ -312,11 +315,11 @@ function Chats() {
               </View>
             </Card>
 
-            {error && <Banner tone="danger" message={error} actionLabel="重试" onAction={refresh} style={styles.banner} />}
+            {error && <Banner tone="danger" message={error} actionLabel={t.common.retry} onAction={refresh} style={styles.banner} />}
 
             {recent.length > 0 && (
               <>
-                <SectionLabel>最近对话</SectionLabel>
+                <SectionLabel>{t.chats.recent}</SectionLabel>
                 <RowGroup>
                   {recent.map((u) => (
                     <PersonRow
@@ -333,9 +336,9 @@ function Chats() {
 
             {/* 为你推荐 */}
             <View style={styles.recHeader}>
-              <SectionLabel style={styles.recLabel}>为你推荐</SectionLabel>
+              <SectionLabel style={styles.recLabel}>{t.chats.recommended}</SectionLabel>
               <Button
-                title="换一批"
+                title={t.chats.shuffle}
                 variant="ghost"
                 size="sm"
                 icon="arrow.triangle.2.circlepath"
@@ -346,12 +349,12 @@ function Chats() {
             </View>
             {tags.length > 0 && (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagBar}>
-                {[{ tag: '全部', count: 0 }, ...tags].map((t, i) => {
-                  const value = i === 0 ? null : t.tag;
+                {[{ tag: t.common.all, count: 0 }, ...tags].map((tc, i) => {
+                  const value = i === 0 ? null : tc.tag;
                   const active = activeTag === value;
                   return (
                     <Pressable
-                      key={t.tag}
+                      key={tc.tag}
                       onPress={() => pickTag(value)}
                       style={({ pressed }) => [
                         styles.tagChip,
@@ -362,7 +365,7 @@ function Chats() {
                         },
                       ]}>
                       <Text style={[Type.footnote, { color: active ? colors.onTint : colors.text, fontWeight: '600' }]}>
-                        {t.tag}
+                        {tc.tag}
                       </Text>
                     </Pressable>
                   );
@@ -382,19 +385,17 @@ function Chats() {
             ) : loaded ? (
               <Card tone="fill" style={styles.recEmpty}>
                 <Text style={[Type.footnote, { color: colors.textSecondary }]}>
-                  {activeTag
-                    ? `还没有带「${activeTag}」标签的人。`
-                    : '还没有可以推荐的人。多写几篇日记、填上对外形象,推荐会更准。'}
+                  {activeTag ? t.chats.noRecForTag(activeTag) : t.chats.noRec}
                 </Text>
               </Card>
             ) : null}
 
             {celebrities.length > 0 && (
               <>
-                <SectionLabel>名人化身</SectionLabel>
+                <SectionLabel>{t.chats.celebrities}</SectionLabel>
                 <RowGroup>
                   {celebrities.map((u) => (
-                    <PersonRow key={u.id} user={u} hint="由人物设定驱动,随便聊聊" />
+                    <PersonRow key={u.id} user={u} hint={t.chats.celebrityHint} />
                   ))}
                 </RowGroup>
               </>

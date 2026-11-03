@@ -8,10 +8,9 @@ import { Card } from '@/components/ui/card';
 import { Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { dateKey } from '@/lib/format';
+import { useT } from '@/lib/i18n';
 
 export { dateKey };
-
-const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
 function monthMatrix(year: number, month: number): (number | null)[][] {
   // month: 0-11;周一为一周之首
@@ -38,6 +37,7 @@ export function DiaryCalendar({
   onSelect: (date: string | null) => void;
 }) {
   const { colors } = useTheme();
+  const t = useT();
   const initial = selected ? new Date(selected) : new Date();
   const [year, setYear] = useState(initial.getFullYear());
   const [month, setMonth] = useState(initial.getMonth());
@@ -53,16 +53,16 @@ export function DiaryCalendar({
   return (
     <Card style={styles.card} padded={false}>
       <View style={styles.header}>
-        <IconButton name="chevron.left" size={16} onPress={() => shift(-1)} accessibilityLabel="上个月" />
+        <IconButton name="chevron.left" size={16} onPress={() => shift(-1)} accessibilityLabel={t.calendar.prevMonth} />
         <Text style={[Type.headline, { color: colors.text }]}>
-          {year} 年 {month + 1} 月
+          {t.calendar.monthTitle(year, month + 1)}
         </Text>
-        <IconButton name="chevron.right" size={16} onPress={() => shift(1)} accessibilityLabel="下个月" />
+        <IconButton name="chevron.right" size={16} onPress={() => shift(1)} accessibilityLabel={t.calendar.nextMonth} />
       </View>
 
       <View style={styles.weekRow}>
-        {WEEKDAYS.map((w) => (
-          <Text key={w} style={[Type.caption2, styles.weekday, { color: colors.textTertiary }]}>
+        {t.calendar.weekdaysMondayFirst.map((w, i) => (
+          <Text key={i} style={[Type.caption2, styles.weekday, { color: colors.textTertiary }]}>
             {w}
           </Text>
         ))}
@@ -80,7 +80,7 @@ export function DiaryCalendar({
               <Pressable
                 key={di}
                 accessibilityRole="button"
-                accessibilityLabel={`${month + 1}月${day}日${hasEntry ? ',有日记' : ''}`}
+                accessibilityLabel={t.calendar.dayLabel(month + 1, day, hasEntry)}
                 style={styles.cell}
                 onPress={() => onSelect(isSelected ? null : key)}>
                 <View

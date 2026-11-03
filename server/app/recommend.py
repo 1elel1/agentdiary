@@ -123,6 +123,29 @@ def _aware(ts: datetime | None) -> datetime | None:
     return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
 
 
+# 推荐理由模板,按客户端界面语言选(X-Language);标签本身是日记里提炼的,不翻译
+_REASONS: dict[str, dict[str, str]] = {
+    "zh-Hans": {"overlap": "你们都在意 {tags}", "keywords": "TA 的关键词:{tags}", "persona": "TA 写了自我介绍", "active": "最近在写日记"},
+    "zh-Hant": {"overlap": "你們都在意 {tags}", "keywords": "對方的關鍵詞:{tags}", "persona": "對方寫了自我介紹", "active": "最近在寫日記"},
+    "en": {"overlap": "You both care about {tags}", "keywords": "Their keywords: {tags}", "persona": "Has written an intro", "active": "Writing lately"},
+    "ja": {"overlap": "二人とも {tags} を大切にしている", "keywords": "キーワード:{tags}", "persona": "自己紹介を書いている", "active": "最近日記を書いている"},
+    "ko": {"overlap": "둘 다 {tags}에 관심", "keywords": "키워드: {tags}", "persona": "자기소개를 썼어요", "active": "최근 일기를 쓰고 있어요"},
+}
+
+
+def _join_tags(tags: list[str], lang: str, quoted: bool) -> str:
+    if lang == "en":
+        return ", ".join(f"\u201c{t}\u201d" if quoted else t for t in tags)
+    if lang == "ko":
+        return ", ".join(f"'{t}'" if quoted else t for t in tags)
+    return "、".join(f"「{t}」" if quoted else t for t in tags)
+
+
+def reason_text(kind: str, tags: list[str], lang: str = "zh-Hans") -> str:
+    tmpl = _REASONS.get(lang, _REASONS["zh-Hans"])[kind]
+    return tmpl.format(tags=_join_tags(tags, lang, quoted=(kind == "overlap")))
+
+
 def score_candidate(
     me_tags: set[str],
     user: User,
@@ -130,8 +153,9 @@ def score_candidate(
     cards: int,
     last_diary: datetime | None,
     now: datetime,
+    lang: str = "zh-Hans",
 ) -> tuple[float, str]:
-    """返回 (分数, 推荐理由)。理由写给用户看,必须能从公开信息直接验证。"""
+    """返回 (分数, 推荐理由)。理由写给用户看,必须能从公开信息直接验证;文案随界面语言。"""
     overlap = [t for t in user_tags if t in me_tags]
     score = 3.0 * len(overlap)
     if user.public_persona:
@@ -144,13 +168,13 @@ def score_candidate(
         score += 0.5
 
     if overlap:
-        reason = "你们都在意 " + "、".join(f"「{t}」" for t in overlap[:3])
+        reason = reason_text("overlap", overlap[:3], lang)
     elif user_tags:
-        reason = "TA 的关键词:" + "、".join(user_tags[:3])
+        reason = reason_text("keywords", user_tags[:3], lang)
     elif user.public_persona:
-        reason = "TA 写了自我介绍"
+        reason = reason_text("persona", [], lang)
     else:
-        reason = "最近在写日记"
+        reason = reason_text("active", [], lang)
     return score, reason
 
 
@@ -162,6 +186,7 @@ def recommend(
     tag: str | None = None,
     seed: int = 0,
     exclude_ids: set[str] | None = None,
+    lang: str = "zh-Hans",
 ) -> list[tuple[User, float, str, list[str], int]]:
     """给 me 推荐一批可访问的化身。
 
@@ -185,7 +210,7 @@ def recommend(
             continue
         if tag and tag not in tags:
             continue
-        score, reason = score_candidate(me_tags, user, tags, cards, last.get(user.id), now)
+        score, reason = score_candidate(me_tags, user, tags, cards, last.get(user.id), now, lang)
         scored.append((user, score, reason, tags, cards))
 
     scored.sort(key=lambda x: (-x[1], x[0].username))

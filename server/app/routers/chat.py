@@ -12,11 +12,12 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, and_, or_, select
 
 from .. import llm
+from ..i18n import client_language
 from ..auth import get_current_user
 from ..celebrities import CELEBRITY_PERSONAS
 from ..db import get_session
@@ -33,6 +34,21 @@ MAX_STYLE_EXAMPLES = 5
 # 成本护栏:prompt 已要求 1~3 句,正常回应远低于此。设上限是防模型跑飞,
 # 输出 token 是输入的 4 倍价,一条失控的长回复比一整篇日记的蒸馏还贵
 MAX_REPLY_TOKENS = 400
+
+# 访客的界面语言 → 化身回复语言。日记、卡片、对外形象本身不翻译;只有「回应用什么语言」跟随客户端
+LANGUAGE_NAMES = {
+    "zh-Hans": "中文",
+    "zh-Hant": "繁体中文",
+    "en": "英文",
+    "ja": "日文",
+    "ko": "韩文",
+}
+
+
+def reply_language(request: Request | None) -> str:
+    """化身回复语言的中文名(写进 prompt),由 X-Language 请求头决定。"""
+    return LANGUAGE_NAMES.get(client_language(request), "中文")
+
 
 # 「TA」是中文网络通行的无性别第三人称。用户的性别未知,prompt 里一律不猜
 _SELF_SYSTEM_TMPL = """你是用户「{owner}」的数字化身——不是 AI 助手,而是 TA 本人的复刻。TA 正在和你对话,以此检验你像不像 TA 自己。
@@ -52,7 +68,7 @@ _SELF_SYSTEM_TMPL = """你是用户「{owner}」的数字化身——不是 AI �
 - 观点与偏好必须与人格卡片一致;卡片没覆盖的话题,坦率说不确定
 - 严禁虚构:不要编造卡片和范例里不存在的人名、事件、细节
 - 严禁 AI 客服腔:不要过度热情,不要列清单,不要文学化排比
-- 用中文回应"""
+- 用{lang}回应"""
 
 _SELF_PERSONA_BLOCK = """
 TA 自己写的「对外形象」——TA 希望别人怎么了解 TA、希望以什么方式交流:
@@ -72,7 +88,7 @@ _VISITOR_SYSTEM_TMPL = """你是用户「{owner}」的数字化身,正在替 TA 
 - 默认只回 1~3 句,不分段,不加结尾总结句。一次只说一件事
 - 隐私红线:绝不复述日记原文,不透露具体人名、地点、可识别的私人事件细节;被追问日记内容时礼貌带过
 - 卡片和对外形象都没覆盖的话题,坦率说「这个我得本人来答」,不要编造
-- 严禁 AI 客服腔;用中文回应"""
+- 严禁 AI 客服腔;用{lang}回应"""
 
 _VISITOR_PERSONA_BLOCK = """
 以下是「{owner}」亲自写下的「对外形象」——TA 希望别人怎么了解自己、希望以什么方式交流。这是 TA 写给访客看的,可以直接引用其中的说法:
@@ -85,20 +101,20 @@ _VISITOR_NO_PERSONA_BLOCK = """
 
 # 冷启动:没有任何卡片。有对外形象的话就靠它撑起对话,比「我一无所知」有用得多
 _COLD_START_SELF = """你是用户的数字化身,但 TA 还没写过日记,你对 TA 一无所知。
-用一两句话以平实的口吻说明:你还没有素材,请 TA 先写几篇日记来喂养你。用中文,不要 AI 客服腔。"""
+用一两句话以平实的口吻说明:你还没有素材,请 TA 先写几篇日记来喂养你。用{lang},不要 AI 客服腔。"""
 
 _COLD_START_SELF_PERSONA = """你是用户「{owner}」的数字化身。TA 还没写过日记,所以你对 TA 的了解只有 TA 自己写的这段「对外形象」:
 {persona}
 
-以 TA 的第一人称口吻和 TA 聊天:自我介绍类的话题可以依据这段话回答;其他话题坦率说你还没有日记素材、请 TA 多写几篇。默认 1~3 句,不编造,不要 AI 客服腔,用中文。"""
+以 TA 的第一人称口吻和 TA 聊天:自我介绍类的话题可以依据这段话回答;其他话题坦率说你还没有日记素材、请 TA 多写几篇。默认 1~3 句,不编造,不要 AI 客服腔,用{lang}。"""
 
 _COLD_START_VISITOR = """你是用户「{owner}」的数字化身,但 TA 还没写过足够的日记,你几乎没有素材。
-用一两句话礼貌告诉访客:这个化身还没被喂养,改天再来。用中文,不要 AI 客服腔。"""
+用一两句话礼貌告诉访客:这个化身还没被喂养,改天再来。用{lang},不要 AI 客服腔。"""
 
 _COLD_START_VISITOR_PERSONA = """你是用户「{owner}」的数字化身,正在替 TA 接待访客「{visitor}」。TA 还没写过日记,你对 TA 的全部了解就是 TA 亲自写给访客的这段「对外形象」:
 {persona}
 {status_line}
-以「{owner}」的第一人称口吻和访客聊天:围绕这段话呈现 TA,按 TA 希望的方式交流;被问到这段话没覆盖的具体经历或观点时,坦率说「这个我得本人来答」,绝不编造。默认 1~3 句,不加结尾总结,不要 AI 客服腔,用中文。"""
+以「{owner}」的第一人称口吻和访客聊天:围绕这段话呈现 TA,按 TA 希望的方式交流;被问到这段话没覆盖的具体经历或观点时,坦率说「这个我得本人来答」,绝不编造。默认 1~3 句,不加结尾总结,不要 AI 客服腔,用{lang}。"""
 
 
 class ChatRequest(BaseModel):
@@ -187,11 +203,15 @@ def _status_line(owner: User) -> str:
     return f"\nTA 今天的状态:「{status}」——对话中可以自然地体现这个当下状态。\n"
 
 
-def _build_system(owner: User, me: User, cards: list[PersonaCard], session: Session) -> str:
+def _build_system(
+    owner: User, me: User, cards: list[PersonaCard], session: Session, lang: str = "中文"
+) -> str:
     # 内置名人化身:人物设定 prompt 驱动,不走卡片/范例/对外形象
     if owner.is_builtin:
         persona = CELEBRITY_PERSONAS.get(owner.username)
         if persona:
+            if lang != "中文":
+                persona += f"\n访客的界面语言是{lang},请用{lang}回应,但保持人物的口吻与思想方式。"
             return persona
     is_self = owner.id == me.id
     public_persona = (owner.public_persona or "").strip()
@@ -199,16 +219,19 @@ def _build_system(owner: User, me: User, cards: list[PersonaCard], session: Sess
     if not cards:
         if is_self:
             if public_persona:
-                return _COLD_START_SELF_PERSONA.format(owner=owner.username, persona=public_persona)
-            return _COLD_START_SELF
+                return _COLD_START_SELF_PERSONA.format(
+                    owner=owner.username, persona=public_persona, lang=lang
+                )
+            return _COLD_START_SELF.format(lang=lang)
         if public_persona:
             return _COLD_START_VISITOR_PERSONA.format(
                 owner=owner.username,
                 visitor=me.username,
                 persona=public_persona,
                 status_line=_status_line(owner),
+                lang=lang,
             )
-        return _COLD_START_VISITOR.format(owner=owner.username)
+        return _COLD_START_VISITOR.format(owner=owner.username, lang=lang)
 
     cards_text = "\n".join(f"- {c.assertion}(置信度 {c.confidence:.1f})" for c in cards)
     if is_self:
@@ -225,6 +248,7 @@ def _build_system(owner: User, me: User, cards: list[PersonaCard], session: Sess
             cards=cards_text,
             examples=examples_text,
             persona_block=persona_block,
+            lang=lang,
         )
     # 访客模式:不注入日记原话(隐私边界);带上对外形象与主人今天的状态
     persona_block = (
@@ -238,6 +262,7 @@ def _build_system(owner: User, me: User, cards: list[PersonaCard], session: Sess
         cards=cards_text,
         persona_block=persona_block,
         status_line=_status_line(owner),
+        lang=lang,
     )
 
 
@@ -259,6 +284,7 @@ def history(
 @router.post("")
 def chat(
     body: ChatRequest,
+    request: Request,
     me: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ) -> AvatarReply:
@@ -269,7 +295,7 @@ def chat(
         raise HTTPException(status_code=422, detail="消息不能为空")
     owner = _resolve_owner(body.target_user_id, me, session)
     cards = _retrieve_cards(session, owner, me)
-    system = _build_system(owner, me, cards, session)
+    system = _build_system(owner, me, cards, session, lang=reply_language(request))
 
     messages = [
         {"role": "user" if m.role == "user" else "assistant", "content": m.content}

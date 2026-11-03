@@ -132,3 +132,41 @@ def test_chat_rejects_blank_message(client):
     me = register(client, _name("b"))
     r = client.post("/chat", json={"message": "   "}, headers=auth(me["token"]))
     assert r.status_code == 422
+
+
+def test_reply_language_follows_client_header(client, fake_llm):
+    me = register(client, _name("lang"))
+    h = auth(me["token"])
+    client.post("/chat", json={"message": "hi"}, headers=h)
+    assert "用中文" in fake_llm.calls[-1]["system"]
+    client.post("/chat", json={"message": "hi"}, headers={**h, "X-Language": "en"})
+    assert "用英文" in fake_llm.calls[-1]["system"]
+    client.post("/chat", json={"message": "hi"}, headers={**h, "X-Language": "xx"})
+    assert "用中文" in fake_llm.calls[-1]["system"]  # 认不出的语言回落中文
+    # 名人化身:非中文时附加一句回复语言要求
+    users = client.get("/users", headers=h).json()
+    luxun = next(u for u in users if u["username"] == "鲁迅")
+    client.post("/chat", json={"message": "hello", "target_user_id": luxun["id"]}, headers={**h, "X-Language": "ja"})
+    assert "用日文回应" in fake_llm.calls[-1]["system"]
+
+
+def test_recommend_reason_follows_language():
+    from datetime import datetime, timezone
+
+    from app.models import User
+    from app.recommend import score_candidate
+
+    now = datetime.now(timezone.utc)
+    u = User(username="x", password_hash="", public_persona="hi")
+    me_tags = {"电影", "徒步"}
+    _, zh = score_candidate(me_tags, u, ["电影", "养猫"], 3, None, now)
+    assert zh == "你们都在意 「电影」"
+    _, en = score_candidate(me_tags, u, ["电影", "养猫"], 3, None, now, lang="en")
+    assert en == "You both care about \u201c电影\u201d"
+    _, ko = score_candidate(me_tags, u, ["养猫"], 3, None, now, lang="ko")
+    assert ko == "키워드: 养猫"
+    _, ja = score_candidate(me_tags, u, [], 3, None, now, lang="ja")
+    assert ja == "自己紹介を書いている"
+    # 认不出来的语言回落简体中文
+    _, unknown = score_candidate(me_tags, u, [], 3, None, now, lang="xx")
+    assert unknown == "TA 写了自我介绍"

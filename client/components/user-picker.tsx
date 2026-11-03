@@ -11,6 +11,7 @@ import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import type { UserSummary } from '@/lib/types';
 
 export type SelectedUsers = Map<string, string>; // id → username
@@ -25,6 +26,7 @@ export function UserPicker({
   tone?: 'fill' | 'surface';
 }) {
   const { colors } = useTheme();
+  const t = useT();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<UserSummary[]>([]);
   const [searching, setSearching] = useState(false);
@@ -76,7 +78,7 @@ export function UserPicker({
       <TextField
         tone={tone}
         icon="magnifyingglass"
-        placeholder="搜索用户名添加…"
+        placeholder={t.picker.searchPlaceholder}
         value={query}
         onChangeText={setQuery}
         autoCapitalize="none"
@@ -84,7 +86,7 @@ export function UserPicker({
         right={searching ? <ActivityIndicator size="small" color={colors.textTertiary} /> : undefined}
       />
       {query.trim().length > 0 && !searching && results.length === 0 && (
-        <Text style={[Type.footnote, styles.empty, { color: colors.textTertiary }]}>没有叫「{query.trim()}」的人</Text>
+        <Text style={[Type.footnote, styles.empty, { color: colors.textTertiary }]}>{t.chats.noMatch(query.trim())}</Text>
       )}
       {results.map((u) => {
         const checked = selected.has(u.id);

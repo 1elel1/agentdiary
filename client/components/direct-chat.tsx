@@ -8,6 +8,7 @@ import { Banner } from '@/components/ui/banner';
 import { EmptyState } from '@/components/ui/empty-state';
 import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import type { DirectMessageItem } from '@/lib/types';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -24,6 +25,7 @@ export function DirectChat({
   keyboardOffset?: number;
 }) {
   const insets = useSafeAreaInsets();
+  const t = useT();
   const myId = useAuthStore((s) => s.userId);
 
   const [messages, setMessages] = useState<DirectMessageItem[]>([]);
@@ -113,8 +115,8 @@ export function DirectChat({
         ListEmptyComponent={
           <EmptyState
             icon="person.2.fill"
-            title={`这里是 ${username} 本人`}
-            message="AI 裁判觉得你们聊得来,真人对话已解锁。说句话吧。"
+            title={t.visit.dmEmptyTitle(username)}
+            message={t.visit.dmEmptyHint}
           />
         }
         renderItem={({ item }) => <MessageBubble text={item.content} mine={item.sender_id === myId} />}
@@ -126,7 +128,7 @@ export function DirectChat({
         value={draft}
         onChange={setDraft}
         onSend={submit}
-        placeholder={`给 ${username} 发消息…`}
+        placeholder={t.visit.dmPlaceholder(username)}
         disabled={sending}
         bottomInset={!kbVisible}
       />

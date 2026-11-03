@@ -17,6 +17,8 @@ import type {
   UserSummary,
 } from './types';
 
+import { getDict, getLanguage } from './i18n';
+
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 // 自定义头像 URL;ts(avatar_updated_at)作缓存指纹,换头像后自动刷新
@@ -50,6 +52,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    // 界面语言;后端据此决定化身用哪种语言回复
+    'X-Language': getLanguage(),
   };
   if (authToken) {
     headers.Authorization = `Bearer ${authToken}`;
@@ -61,7 +65,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // RN 的网络层失败一律是 "Network request failed",不带地址,排查时
     // 完全看不出连的是哪儿、是明文被拦还是服务器没起。把地址带上。
     // 常见成因:Android 9+ 禁止明文 HTTP、后端没起、地址写错、证书无效。
-    throw new ApiError(0, `连不上服务器 ${BASE_URL}(${(e as Error).message})`);
+    throw new ApiError(0, getDict().errors.cannotReach(BASE_URL, (e as Error).message));
   }
   if (res.status === 401 && !path.startsWith('/auth/')) {
     onUnauthorized?.();

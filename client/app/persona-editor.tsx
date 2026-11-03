@@ -20,19 +20,13 @@ import { Radius, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { dialog } from '@/lib/dialog';
 import { haptic } from '@/lib/haptics';
+import { useT } from '@/lib/i18n';
 import { useAuthStore } from '@/stores/auth-store';
 import { useProfileStore } from '@/stores/profile-store';
 
-// 引导句:点一下就把开头填进去,降低「不知道写什么」的门槛
-const PROMPTS: { label: string; starter: string }[] = [
-  { label: '我是谁', starter: '我是' },
-  { label: '我在意什么', starter: '我最在意的是' },
-  { label: '希望怎么聊', starter: '和我聊天,可以' },
-  { label: '不想聊的', starter: '我不太想聊' },
-];
-
 export default function PersonaEditorScreen() {
   const { colors } = useTheme();
+  const t = useT();
   const headerHeight = useHeaderHeight();
   const userId = useAuthStore((s) => s.userId);
   const { loaded, persona, personaMaxChars, refresh, savePersona } = useProfileStore();
@@ -62,16 +56,16 @@ export default function PersonaEditorScreen() {
       router.back();
     } catch (e) {
       haptic.error();
-      dialog.alert('保存失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.common.saveFailed, e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
   };
 
   const clear = async () => {
     const ok = await dialog.confirm({
-      title: '清除对外形象?',
-      message: '清除后,访客只能通过化身从日记学到的东西来了解你。',
-      confirmText: '清除',
+      title: t.persona.clearTitle,
+      message: t.persona.clearMessage,
+      confirmText: t.common.clear,
       destructive: true,
     });
     if (!ok) return;
@@ -81,14 +75,14 @@ export default function PersonaEditorScreen() {
       haptic.success();
       router.back();
     } catch (e) {
-      dialog.alert('操作失败', e instanceof Error ? e.message : String(e));
+      dialog.alert(t.common.actionFailed, e instanceof Error ? e.message : String(e));
       setSaving(false);
     }
   };
 
   const close = async () => {
     if (dirty) {
-      const ok = await dialog.confirm({ title: '放弃修改?', confirmText: '放弃', destructive: true });
+      const ok = await dialog.confirm({ title: t.persona.discardTitle, confirmText: t.common.discard, destructive: true });
       if (!ok) return;
     }
     router.back();
@@ -109,10 +103,10 @@ export default function PersonaEditorScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}>
       <Stack.Screen
         options={{
-          title: '对外形象',
-          headerLeft: () => <HeaderButton title="取消" onPress={close} />,
+          title: t.persona.title,
+          headerLeft: () => <HeaderButton title={t.common.cancel} onPress={close} />,
           headerRight: () => (
-            <HeaderButton title="保存" bold loading={saving} disabled={!dirty || overLimit} onPress={save} />
+            <HeaderButton title={t.common.save} bold loading={saving} disabled={!dirty || overLimit} onPress={save} />
           ),
         }}
       />
@@ -123,16 +117,16 @@ export default function PersonaEditorScreen() {
         <Card tone="tint" style={styles.explain}>
           <View style={styles.explainRow}>
             <IconSymbol name="sparkles" size={18} color={colors.tint} />
-            <Text style={[Type.headline, { color: colors.text }]}>你希望别人怎么了解你?</Text>
+            <Text style={[Type.headline, { color: colors.text }]}>{t.persona.heading}</Text>
           </View>
           <Text style={[Type.footnote, styles.explainText, { color: colors.textSecondary }]}>
-            这段话会展示给来找你化身聊天的人,也会告诉化身:面对别人时该怎么呈现你——先聊什么、用什么语气、哪些不聊。
-            {'\n'}它不替代日记:化身说的事实仍来自你的日记,它只决定「怎么说」。
+            {t.persona.explain}
           </Text>
         </Card>
 
+        {/* 引导句:点一下就把开头填进去,降低「不知道写什么」的门槛 */}
         <View style={styles.prompts}>
-          {PROMPTS.map((p) => (
+          {t.persona.prompts.map((p) => (
             <Pressable
               key={p.label}
               onPress={() => appendStarter(p.starter)}
@@ -151,10 +145,8 @@ export default function PersonaEditorScreen() {
           onChangeText={setText}
           minHeight={240}
           autoFocus={!persona}
-          placeholder={
-            '例如:\n我是个话不多但认真的人,熟了之后挺能聊。最近在学做饭,也常一个人去看电影。\n和我聊天可以直接一点,不用客套;我不太想聊工作和星座。'
-          }
-          error={overLimit ? `超出 ${trimmed.length - personaMaxChars} 字` : undefined}
+          placeholder={t.persona.placeholder}
+          error={overLimit ? t.persona.over(trimmed.length - personaMaxChars) : undefined}
         />
         <Text
           style={[
@@ -166,7 +158,7 @@ export default function PersonaEditorScreen() {
         </Text>
 
         {persona && (
-          <Button title="清除对外形象" variant="dangerSoft" fullWidth onPress={clear} style={styles.clear} disabled={saving} />
+          <Button title={t.persona.clear} variant="dangerSoft" fullWidth onPress={clear} style={styles.clear} disabled={saving} />
         )}
       </ScrollView>
     </KeyboardAvoidingView>

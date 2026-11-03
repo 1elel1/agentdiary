@@ -12,6 +12,7 @@ from .. import recommend as rec
 from ..auth import get_current_user, hash_password, verify_password
 from ..config import AVATAR_DIR
 from ..db import get_session
+from ..i18n import client_language
 from ..models import (
     AuthToken,
     ChatMessage,
@@ -386,6 +387,7 @@ def search_users(
 
 @router.get("/recommended")
 def recommended_users(
+    request: Request,
     limit: int = 8,
     tag: str | None = None,
     seed: int = 0,
@@ -393,10 +395,12 @@ def recommended_users(
     session: Session = Depends(get_session),
 ) -> list[UserSummary]:
     """为你推荐:按兴趣标签重合 + 资料完整度 + 活跃度打分,带可验证的推荐理由。
-    seed 换一批;tag 只看带该标签的人。"""
+    seed 换一批;tag 只看带该标签的人;理由文案随 X-Language。"""
     limit = max(1, min(limit, 20))
     counts = rec.card_counts(session)
-    picked = rec.recommend(session, me, limit=limit, tag=(tag or "").strip() or None, seed=seed)
+    picked = rec.recommend(
+        session, me, limit=limit, tag=(tag or "").strip() or None, seed=seed, lang=client_language(request)
+    )
     return [_summary(u, counts, reason=reason) for u, _score, reason, _tags, _cards in picked]
 
 

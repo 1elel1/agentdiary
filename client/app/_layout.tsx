@@ -15,6 +15,7 @@ import 'react-native-reanimated';
 import { DialogHost } from '@/components/ui/dialog-host';
 import { Palette } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useT } from '@/lib/i18n';
 import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
 
@@ -46,6 +47,10 @@ export default function RootLayout() {
   const { scheme, colors } = useTheme();
   const { hydrated, hydrate } = useAuthStore();
   const hydrateSettings = useSettingsStore((s) => s.hydrate);
+  // 设置(含界面语言)也要先恢复,否则首帧会先闪一下默认语言
+  const settingsHydrated = useSettingsStore((s) => s.hydrated);
+  const t = useT();
+  const ready = hydrated && settingsHydrated;
 
   useEffect(() => {
     hydrate();
@@ -53,10 +58,10 @@ export default function RootLayout() {
   }, [hydrate, hydrateSettings]);
 
   useEffect(() => {
-    if (hydrated) SplashScreen.hideAsync().catch(() => {});
-  }, [hydrated]);
+    if (ready) SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
 
-  if (!hydrated) {
+  if (!ready) {
     return null;
   }
 
@@ -76,19 +81,19 @@ export default function RootLayout() {
           }}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="diary-editor" options={{ presentation: 'modal', title: '写日记' }} />
-          <Stack.Screen name="persona-editor" options={{ presentation: 'modal', title: '对外形象' }} />
-          <Stack.Screen name="status-editor" options={{ presentation: 'modal', title: '今日状态' }} />
-          <Stack.Screen name="appearance" options={{ presentation: 'modal', title: '外观' }} />
+          <Stack.Screen name="diary-editor" options={{ presentation: 'modal', title: t.screens.diaryEditor }} />
+          <Stack.Screen name="persona-editor" options={{ presentation: 'modal', title: t.screens.personaEditor }} />
+          <Stack.Screen name="status-editor" options={{ presentation: 'modal', title: t.screens.statusEditor }} />
+          <Stack.Screen name="appearance" options={{ presentation: 'modal', title: t.screens.appearance }} />
           <Stack.Screen
             name="visibility-picker"
-            options={{ presentation: 'modal', title: '指定可见的人' }}
+            options={{ presentation: 'modal', title: t.screens.visibilityPicker }}
           />
-          <Stack.Screen name="pattern-setup" options={{ presentation: 'modal', title: '手势锁' }} />
-          <Stack.Screen name="settings" options={{ title: '账号与安全' }} />
-          <Stack.Screen name="persona-cards" options={{ title: '人格卡片' }} />
+          <Stack.Screen name="pattern-setup" options={{ presentation: 'modal', title: t.screens.patternSetup }} />
+          <Stack.Screen name="settings" options={{ title: t.screens.settings }} />
+          <Stack.Screen name="persona-cards" options={{ title: t.screens.personaCards }} />
           <Stack.Screen name="visit/[userId]" options={{ title: '' }} />
-          <Stack.Screen name="real-chats" options={{ title: '真人聊天' }} />
+          <Stack.Screen name="real-chats" options={{ title: t.screens.realChats }} />
         </Stack>
         <DialogHost />
         <StatusBar style={Platform.OS === 'android' ? (scheme === 'dark' ? 'light' : 'dark') : 'auto'} />
