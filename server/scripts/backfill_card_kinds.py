@@ -6,10 +6,16 @@
     cd server && .venv/bin/python scripts/backfill_card_kinds.py
 """
 
+import sys
+from pathlib import Path
+
 from sqlmodel import Session, select
 
-from app.db import engine, init_db
-from app.models import PersonaCard, User
+# 以 scripts/ 为工作目录直接运行时,server/ 不在 sys.path 里,app 包找不到(seed_users.py 同样处理)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.db import engine, init_db  # noqa: E402
+from app.models import PersonaCard, User  # noqa: E402
 
 
 def main() -> None:
