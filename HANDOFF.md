@@ -197,7 +197,10 @@ App 失联**,修复要重新过审)、隐私政策 URL、App 隐私标签(需声
 
 ### v4.3 · 2026-11-03 · 信任主线:默认私密、训练闸门、可控的化身理解(采纳外部评审)
 
-**部署**:提交信息带 `[deploy] [task:backfill-card-kinds]` 推送后由 Actions 部署(运行链接见随后的 docs 提交和 Notion)。
+**已部署**:2026-11-03 16:20 UTC,Actions 第 10 次运行全绿
+(https://github.com/1elel1/agentdiary/actions/runs/41672707216):服务器在提交 `d8ae8949`,21 个测试在服务器上通过,
+迁移新增 `diaryentry.use_for_twin`、`personacard.kind`,部署后任务回填种子卡片 kind=stable 共 600 张。
+(第 9 次运行部署本身成功、后置任务因脚本 sys.path 失败,第 10 次修复后重跑。)未合并 main,等真机验收。
 
 **来源**:用户给的另一份 AI 评审(`CLOUD_V4_2_UX_PRODUCT_REVIEW.md`,未入库)。采纳了它的 P0 和大部分旅程建议,
 没采纳「把发现页 / 名人化身 / 对外形象从 Phase 0 导航里撤掉」:这些是用户点名做的既成功能(CLAUDE.md §3),
